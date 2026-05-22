@@ -458,10 +458,12 @@ async function boot() {
 
     if (pathname === '/api/config') {
       if (req.method === 'GET') {
+        const liveCfg = await readConfig();
+        const liveLists = normalizeSourceLists(liveCfg);
         return json(res, 200, {
-          sourceMode: SOURCE_MODE,
-          mediaRoots: MEDIA_ROOTS,
-          autoindexRootUrls: AUTOINDEX_ROOT_URLS
+          sourceMode: String(liveCfg.sourceMode || SOURCE_MODE).toLowerCase(),
+          mediaRoots: liveLists.mediaRoots,
+          autoindexRootUrls: liveLists.autoindexRootUrls
         });
       }
       if (req.method === 'POST') {
@@ -469,9 +471,11 @@ async function boot() {
           let body = '';
           for await (const chunk of req) body += chunk;
           const payload = JSON.parse(body || '{}');
-          const nextMode = String(payload.sourceMode || SOURCE_MODE).toLowerCase();
-          const nextMediaRoots = Array.isArray(payload.mediaRoots) ? payload.mediaRoots.filter(Boolean) : MEDIA_ROOTS;
-          const nextAutoRoots = Array.isArray(payload.autoindexRootUrls) ? payload.autoindexRootUrls.filter(Boolean) : AUTOINDEX_ROOT_URLS;
+          const baseCfg = await readConfig();
+          const baseLists = normalizeSourceLists(baseCfg);
+          const nextMode = String(payload.sourceMode || baseCfg.sourceMode || SOURCE_MODE).toLowerCase();
+          const nextMediaRoots = Array.isArray(payload.mediaRoots) ? payload.mediaRoots.filter(Boolean) : baseLists.mediaRoots;
+          const nextAutoRoots = Array.isArray(payload.autoindexRootUrls) ? payload.autoindexRootUrls.filter(Boolean) : baseLists.autoindexRootUrls;
           if (!['filesystem', 'autoindex'].includes(nextMode)) {
             return json(res, 400, { error: 'sourceMode inválido' });
           }
@@ -481,7 +485,6 @@ async function boot() {
           if (nextMode === 'autoindex' && nextAutoRoots.length === 0) {
             return json(res, 400, { error: 'Agrega al menos un autoindexRootUrl' });
           }
-          const baseCfg = await readConfig();
           const saveCfg = {
             ...baseCfg,
             sourceMode: nextMode,
