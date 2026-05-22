@@ -14,7 +14,9 @@ const defaults = {
   port: 3000,
   sourceMode: 'filesystem',
   mediaRoot: './takeout-20260520T011015Z-3-001',
+  mediaRoots: [],
   autoindexRootUrl: 'http://127.0.0.1:8080/takeout-20260520T011015Z-3-001/',
+  autoindexRootUrls: [],
   mediaIndexFile: './media-index.json',
   watchDebounceMs: 1200,
   autoindexRefreshMs: 20000,
@@ -117,6 +119,20 @@ async function readConfig() {
   }
 }
 
+async function writeConfig(cfg) {
+  await fs.writeFile(CONFIG_FILE, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');
+}
+
+function normalizeSourceLists(cfg) {
+  const mediaRoots = (Array.isArray(cfg.mediaRoots) && cfg.mediaRoots.length
+    ? cfg.mediaRoots
+    : [cfg.mediaRoot]).filter(Boolean).map(p => path.resolve(String(p)));
+  const autoindexRootUrls = (Array.isArray(cfg.autoindexRootUrls) && cfg.autoindexRootUrls.length
+    ? cfg.autoindexRootUrls
+    : [cfg.autoindexRootUrl]).filter(Boolean).map(u => String(u));
+  return { mediaRoots, autoindexRootUrls };
+}
+
 async function walk(dir, out = []) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
@@ -144,8 +160,13 @@ async function boot() {
   const HOST = process.env.HOST || cfg.host;
   const PORT = Number(process.env.PORT || cfg.port);
   const SOURCE_MODE = String(process.env.SOURCE_MODE || cfg.sourceMode || 'filesystem').toLowerCase();
-  const MEDIA_ROOT = path.resolve(process.env.MEDIA_ROOT || cfg.mediaRoot);
-  const AUTOINDEX_ROOT_URL = String(process.env.AUTOINDEX_ROOT_URL || cfg.autoindexRootUrl || '');
+  const lists = normalizeSourceLists(cfg);
+  const MEDIA_ROOTS = process.env.MEDIA_ROOT
+    ? [path.resolve(process.env.MEDIA_ROOT)]
+    : lists.mediaRoots;
+  const AUTOINDEX_ROOT_URLS = process.env.AUTOINDEX_ROOT_URL
+    ? [String(process.env.AUTOINDEX_ROOT_URL)]
+    : lists.autoindexRootUrls;
   const INDEX_FILE = path.resolve(process.env.MEDIA_INDEX_FILE || cfg.mediaIndexFile);
   const INDEX_TMP = `${INDEX_FILE}.tmp`;
   const WATCH_DEBOUNCE_MS = Number(process.env.WATCH_DEBOUNCE_MS || cfg.watchDebounceMs);
@@ -160,29 +181,36 @@ async function boot() {
   if (!['filesystem', 'autoindex'].includes(SOURCE_MODE)) {
     throw new Error(`sourceMode inválido: ${SOURCE_MODE}. Usa "filesystem" o "autoindex".`);
   }
-  if (SOURCE_MODE === 'autoindex' && !AUTOINDEX_ROOT_URL) {
-    throw new Error('autoindexRootUrl es requerido cuando sourceMode="autoindex".');
+  if (SOURCE_MODE === 'autoindex' && AUTOINDEX_ROOT_URLS.length === 0) {
+    throw new Error('autoindexRootUrl(s) es requerido cuando sourceMode="autoindex".');
+  }
+  if (SOURCE_MODE === 'filesystem' && MEDIA_ROOTS.length === 0) {
+    throw new Error('mediaRoot(s) es requerido cuando sourceMode="filesystem".');
   }
   if (SOURCE_MODE === 'filesystem') {
-    try {
-      const st = await fs.stat(MEDIA_ROOT);
-      if (!st.isDirectory()) throw new Error('mediaRoot existe pero no es directorio');
-    } catch (err) {
-      throw new Error(`mediaRoot inválido/no accesible: ${MEDIA_ROOT} (${err.message})`);
+    for (const mediaRoot of MEDIA_ROOTS) {
+      try {
+        const st = await fs.stat(mediaRoot);
+        if (!st.isDirectory()) throw new Error('mediaRoot existe pero no es directorio');
+      } catch (err) {
+        throw new Error(`mediaRoot inválido/no accesible: ${mediaRoot} (${err.message})`);
+      }
     }
   } else {
-    let parsed = null;
-    try {
-      parsed = new URL(AUTOINDEX_ROOT_URL);
-    } catch (err) {
-      throw new Error(`autoindexRootUrl inválido: ${AUTOINDEX_ROOT_URL} (${err.message})`);
-    }
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
-      throw new Error(`autoindexRootUrl debe ser http/https: ${AUTOINDEX_ROOT_URL}`);
-    }
-    const probe = await fetch(parsed.href, { method: 'GET', cache: 'no-store' });
-    if (!probe.ok) {
-      throw new Error(`autoindexRootUrl no accesible: HTTP ${probe.status} ${parsed.href}`);
+    for (const rootUrl of AUTOINDEX_ROOT_URLS) {
+      let parsed = null;
+      try {
+        parsed = new URL(rootUrl);
+      } catch (err) {
+        throw new Error(`autoindexRootUrl inválido: ${rootUrl} (${err.message})`);
+      }
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error(`autoindexRootUrl debe ser http/https: ${rootUrl}`);
+      }
+      const probe = await fetch(parsed.href, { method: 'GET', cache: 'no-store' });
+      if (!probe.ok) {
+        throw new Error(`autoindexRootUrl no accesible: HTTP ${probe.status} ${parsed.href}`);
+      }
     }
   }
   try {
@@ -201,7 +229,7 @@ async function boot() {
       const mimeType = contentTypes[ext] || 'application/octet-stream';
       const total = st.size;
       const range = req.headers.range;
-      const isMedia = absolutePath.startsWith(MEDIA_ROOT);
+      const isMedia = MEDIA_ROOTS.some(root => absolutePath.startsWith(root));
 
       if (isMedia && range) {
         const m = String(range).match(/^bytes=(\d*)-(\d*)$/i);
@@ -270,71 +298,75 @@ async function boot() {
   }
 
   async function buildFilesystemIndex() {
-    const absFiles = await walk(MEDIA_ROOT);
     const files = [];
-    for (const abs of absFiles) {
-      const rel = toPosix(path.relative(MEDIA_ROOT, abs));
-      const type = detectType(rel);
-      if (!type) continue;
-      const st = await fs.stat(abs);
-      const name = decodeURIComponent(path.basename(rel));
-      const dateInfo = guessDateDetailed(name, rel);
-      files.push({
-        url: `/media/${rel}`,
-        name,
-        type,
-        date: dateInfo.date,
-        datePatched: dateInfo.patched,
-        size: st.size,
-        mtimeMs: Math.floor(st.mtimeMs)
-      });
+    for (let rootIdx = 0; rootIdx < MEDIA_ROOTS.length; rootIdx += 1) {
+      const mediaRoot = MEDIA_ROOTS[rootIdx];
+      const absFiles = await walk(mediaRoot);
+      for (const abs of absFiles) {
+        const rel = toPosix(path.relative(mediaRoot, abs));
+        const type = detectType(rel);
+        if (!type) continue;
+        const st = await fs.stat(abs);
+        const name = decodeURIComponent(path.basename(rel));
+        const dateInfo = guessDateDetailed(name, rel);
+        files.push({
+          url: `/media/${rootIdx}/${rel}`,
+          name,
+          type,
+          date: dateInfo.date,
+          datePatched: dateInfo.patched,
+          size: st.size,
+          mtimeMs: Math.floor(st.mtimeMs)
+        });
+      }
     }
     return files;
   }
 
   async function buildAutoindexIndex() {
-    const root = new URL(AUTOINDEX_ROOT_URL);
-    const queue = [root.href];
-    const visited = new Set();
     const files = [];
+    for (const rootUrl of AUTOINDEX_ROOT_URLS) {
+      const root = new URL(rootUrl);
+      const queue = [root.href];
+      const visited = new Set();
+      while (queue.length) {
+        const current = queue.shift();
+        if (!current || visited.has(current)) continue;
+        visited.add(current);
 
-    while (queue.length) {
-      const current = queue.shift();
-      if (!current || visited.has(current)) continue;
-      visited.add(current);
-
-      const res = await fetch(current, { cache: 'no-store' });
-      if (!res.ok) {
-        log(`Autoindex fetch skip url=${current} status=${res.status}`);
-        continue;
-      }
-      const html = await res.text();
-      const links = parseAutoindexLinks(html);
-
-      for (const href of links) {
-        if (!href || href.startsWith('?') || href === '../') continue;
-        const url = new URL(href, current);
-        if (url.origin !== root.origin) continue;
-        if (!url.pathname.startsWith(root.pathname)) continue;
-
-        if (href.endsWith('/')) {
-          queue.push(url.href);
+        const res = await fetch(current, { cache: 'no-store' });
+        if (!res.ok) {
+          log(`Autoindex fetch skip url=${current} status=${res.status}`);
           continue;
         }
+        const html = await res.text();
+        const links = parseAutoindexLinks(html);
 
-        const type = detectType(url.pathname);
-        if (!type) continue;
-        const name = toFileNameFromUrl(url.href);
-        const dateInfo = guessDateDetailed(name, url.pathname);
-        files.push({
-          url: url.href,
-          name,
-          type,
-          date: dateInfo.date,
-          datePatched: dateInfo.patched,
-          size: 0,
-          mtimeMs: 0
-        });
+        for (const href of links) {
+          if (!href || href.startsWith('?') || href === '../') continue;
+          const url = new URL(href, current);
+          if (url.origin !== root.origin) continue;
+          if (!url.pathname.startsWith(root.pathname)) continue;
+
+          if (href.endsWith('/')) {
+            queue.push(url.href);
+            continue;
+          }
+
+          const type = detectType(url.pathname);
+          if (!type) continue;
+          const name = toFileNameFromUrl(url.href);
+          const dateInfo = guessDateDetailed(name, url.pathname);
+          files.push({
+            url: url.href,
+            name,
+            type,
+            date: dateInfo.date,
+            datePatched: dateInfo.patched,
+            size: 0,
+            mtimeMs: 0
+          });
+        }
       }
     }
     return files;
@@ -424,10 +456,64 @@ async function boot() {
       });
     }
 
+    if (pathname === '/api/config') {
+      if (req.method === 'GET') {
+        return json(res, 200, {
+          sourceMode: SOURCE_MODE,
+          mediaRoots: MEDIA_ROOTS,
+          autoindexRootUrls: AUTOINDEX_ROOT_URLS
+        });
+      }
+      if (req.method === 'POST') {
+        try {
+          let body = '';
+          for await (const chunk of req) body += chunk;
+          const payload = JSON.parse(body || '{}');
+          const nextMode = String(payload.sourceMode || SOURCE_MODE).toLowerCase();
+          const nextMediaRoots = Array.isArray(payload.mediaRoots) ? payload.mediaRoots.filter(Boolean) : MEDIA_ROOTS;
+          const nextAutoRoots = Array.isArray(payload.autoindexRootUrls) ? payload.autoindexRootUrls.filter(Boolean) : AUTOINDEX_ROOT_URLS;
+          if (!['filesystem', 'autoindex'].includes(nextMode)) {
+            return json(res, 400, { error: 'sourceMode inválido' });
+          }
+          if (nextMode === 'filesystem' && nextMediaRoots.length === 0) {
+            return json(res, 400, { error: 'Agrega al menos un mediaRoot' });
+          }
+          if (nextMode === 'autoindex' && nextAutoRoots.length === 0) {
+            return json(res, 400, { error: 'Agrega al menos un autoindexRootUrl' });
+          }
+          const baseCfg = await readConfig();
+          const saveCfg = {
+            ...baseCfg,
+            sourceMode: nextMode,
+            mediaRoots: nextMediaRoots,
+            autoindexRootUrls: nextAutoRoots
+          };
+          await writeConfig(saveCfg);
+          return json(res, 200, { ok: true, requiresRestart: true });
+        } catch (err) {
+          return json(res, 400, { error: err.message || 'config inválida' });
+        }
+      }
+      res.writeHead(405);
+      return res.end('Method not allowed');
+    }
+
     if (SOURCE_MODE === 'filesystem' && pathname.startsWith('/media/')) {
-      const rel = pathname.slice('/media/'.length);
-      const abs = path.resolve(MEDIA_ROOT, rel);
-      if (!abs.startsWith(MEDIA_ROOT)) {
+      const relAll = pathname.slice('/media/'.length);
+      const slash = relAll.indexOf('/');
+      if (slash < 1) {
+        res.writeHead(400);
+        return res.end('Bad media path');
+      }
+      const rootIdx = Number(relAll.slice(0, slash));
+      const rel = relAll.slice(slash + 1);
+      const mediaRoot = MEDIA_ROOTS[rootIdx];
+      if (!mediaRoot) {
+        res.writeHead(404);
+        return res.end('Media root not found');
+      }
+      const abs = path.resolve(mediaRoot, rel);
+      if (!abs.startsWith(mediaRoot)) {
         res.writeHead(403);
         return res.end('Forbidden');
       }
@@ -449,12 +535,14 @@ async function boot() {
   await loadPersistedIndex();
   ensureScan().catch(() => {});
   if (SOURCE_MODE === 'filesystem') {
-    try {
-      fs.watch(MEDIA_ROOT, { recursive: true }, () => triggerScanDebounced());
-      log(`Watching filesystem path=${MEDIA_ROOT}`);
-    } catch {
-      // Keep service running even if recursive watch is not supported.
-      log('fs.watch recursive not available');
+    for (const mediaRoot of MEDIA_ROOTS) {
+      try {
+        fs.watch(mediaRoot, { recursive: true }, () => triggerScanDebounced());
+        log(`Watching filesystem path=${mediaRoot}`);
+      } catch {
+        // Keep service running even if recursive watch is not supported.
+        log(`fs.watch recursive not available for ${mediaRoot}`);
+      }
     }
   } else {
     log(`Autoindex periodic refresh everyMs=${AUTOINDEX_REFRESH_MS}`);
@@ -464,8 +552,8 @@ async function boot() {
   server.listen(PORT, HOST, () => {
     process.stdout.write(`Server running at http://${HOST}:${PORT}\n`);
     process.stdout.write(`Source mode: ${SOURCE_MODE}\n`);
-    if (SOURCE_MODE === 'filesystem') process.stdout.write(`Media root: ${MEDIA_ROOT}\n`);
-    if (SOURCE_MODE === 'autoindex') process.stdout.write(`Autoindex root: ${AUTOINDEX_ROOT_URL}\n`);
+    if (SOURCE_MODE === 'filesystem') process.stdout.write(`Media roots: ${MEDIA_ROOTS.join(' | ')}\n`);
+    if (SOURCE_MODE === 'autoindex') process.stdout.write(`Autoindex roots: ${AUTOINDEX_ROOT_URLS.join(' | ')}\n`);
     process.stdout.write(`Config file: ${CONFIG_FILE}\n`);
     process.stdout.write(`Debug: ${DEBUG ? 'ON' : 'OFF'}\n`);
   });

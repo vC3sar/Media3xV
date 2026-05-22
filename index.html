@@ -434,6 +434,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
     <button class="tbtn" id="viewBtn" onclick="toggleLayout()" title="Cambiar vista">
       <svg id="viewIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
     </button>
+    <button class="tbtn" id="cfgBtn" onclick="openConfigModal()" title="Configuración">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0A1.65 1.65 0 0 0 9.91 3H10a2 2 0 1 1 4 0h.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0A1.65 1.65 0 0 0 21 9.91H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
   </header>
 
   <!-- SUBBAR -->
@@ -528,9 +531,39 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
 <!-- TOAST -->
 <div id="toast"></div>
 
+<!-- CONFIG MODAL -->
+<div id="cfgModal" style="display:none;position:fixed;inset:0;z-index:85;background:rgba(0,0,0,.65);backdrop-filter:blur(2px);">
+  <div style="max-width:680px;margin:8vh auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);">
+      <strong style="font-size:13px;">Configuración de Sources</strong>
+      <button class="tbtn" onclick="closeConfigModal()">Cerrar</button>
+    </div>
+    <div style="padding:14px;display:flex;flex-direction:column;gap:10px;">
+      <label style="font-size:12px;color:var(--muted-l);">Modo activo (solo uno)</label>
+      <select id="cfgSourceMode" class="tbtn" style="justify-content:flex-start;width:220px;">
+        <option value="filesystem">filesystem (mediaRoots)</option>
+        <option value="autoindex">autoindex (autoindexRootUrls)</option>
+      </select>
+
+      <label style="font-size:12px;color:var(--muted-l);">mediaRoots (uno por línea)</label>
+      <textarea id="cfgMediaRoots" style="width:100%;min-height:92px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px;font-family:var(--mono);font-size:12px;"></textarea>
+
+      <label style="font-size:12px;color:var(--muted-l);">autoindexRootUrls (uno por línea)</label>
+      <textarea id="cfgAutoRoots" style="width:100%;min-height:92px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px;font-family:var(--mono);font-size:12px;"></textarea>
+
+      <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">
+        <button class="tbtn" onclick="loadConfigModalData()">Recargar</button>
+        <button class="tbtn active" onclick="saveConfigModalData()">Guardar</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);">Nota: por ahora solo se usa un modo a la vez. Después de guardar, reinicia el servidor para aplicar cambios.</div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── CONFIG ──────────────────────────────────────────────────
 const INDEX_URL = "/api/media-index";
+const CONFIG_URL = "/api/config";
 const INDEX_POLL_MS = 15000;
 const DEBUG_CLIENT = new URLSearchParams(location.search).get('debug') === 'true';
 const IMG = /\.(jpg|jpeg|png|gif|webp|bmp|heic)$/i;
@@ -689,6 +722,49 @@ async function listDir(path) {
 function dbg(...args) {
   if (!DEBUG_CLIENT) return;
   console.log('[DEBUG-CLIENT]', ...args);
+}
+
+async function loadConfigModalData() {
+  try {
+    const res = await fetch(CONFIG_URL, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const cfg = await res.json();
+    document.getElementById('cfgSourceMode').value = cfg.sourceMode || 'filesystem';
+    document.getElementById('cfgMediaRoots').value = (cfg.mediaRoots || []).join('\n');
+    document.getElementById('cfgAutoRoots').value = (cfg.autoindexRootUrls || []).join('\n');
+  } catch (err) {
+    toast(`No se pudo cargar config: ${err.message}`);
+  }
+}
+
+function openConfigModal() {
+  document.getElementById('cfgModal').style.display = 'block';
+  loadConfigModalData();
+}
+
+function closeConfigModal() {
+  document.getElementById('cfgModal').style.display = 'none';
+}
+
+async function saveConfigModalData() {
+  const sourceMode = document.getElementById('cfgSourceMode').value;
+  const mediaRoots = document.getElementById('cfgMediaRoots').value
+    .split('\n').map(s => s.trim()).filter(Boolean);
+  const autoindexRootUrls = document.getElementById('cfgAutoRoots').value
+    .split('\n').map(s => s.trim()).filter(Boolean);
+  try {
+    const res = await fetch(CONFIG_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceMode, mediaRoots, autoindexRootUrls })
+    });
+    const payload = await res.json();
+    if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+    closeConfigModal();
+    toast('Configuración guardada. Reinicia el servidor para aplicar.', 5200);
+  } catch (err) {
+    toast(`No se pudo guardar: ${err.message}`);
+  }
 }
 
 function setViewerVideoFallback(file, visible) {
@@ -1427,10 +1503,10 @@ document.getElementById('viewer').addEventListener('click', e => {
 });
 
 // ── TOAST ─────────────────────────────────────────────────────
-function toast(msg) {
+function toast(msg, ms = 2200) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2200);
+  setTimeout(() => t.classList.remove('show'), ms);
 }
 
 // ── EVENTS ────────────────────────────────────────────────────

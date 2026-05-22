@@ -3,7 +3,13 @@
   "port": 3000,
   "sourceMode": "filesystem",
   "mediaRoot": "/data/data/com.termux/files/home/.termux/Backups/",
+  "mediaRoots": [
+    "/data/data/com.termux/files/home/.termux/Backups/"
+  ],
   "autoindexRootUrl": "http://192.168.1.125:8080/takeout-20260520T011015Z-3-001/",
+  "autoindexRootUrls": [
+    "http://192.168.1.125:8080/takeout-20260520T011015Z-3-001/"
+  ],
   "mediaIndexFile": "./media-index.json",
   "watchDebounceMs": 1200,
   "autoindexRefreshMs": 20000,
