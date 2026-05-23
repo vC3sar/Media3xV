@@ -2,7 +2,6 @@
 import http from "node:http";
 import { promises as fs } from "node:fs";
 import { createReadStream } from "node:fs";
-import { spawn } from "node:child_process";
 import path from "node:path";
 import crypto from "node:crypto";
 import { URL } from "node:url";
@@ -13,6 +12,9 @@ import {
   writeConfig as writeConfigFile,
 } from "./js/server/features/config/repository.mjs";
 import { buildIndexPayloadFactory } from "./js/server/features/indexing/builders.mjs";
+import { createCacheService } from "./js/server/features/cache/service.mjs";
+import { createThumbHandler } from "./js/server/features/thumb/handler.mjs";
+import { createLiveService } from "./js/server/features/live/service.mjs";
 
 const ROOT_DIR = path.resolve(".");
 const CONFIG_FILE = path.resolve(ROOT_DIR, "config.json");
@@ -117,197 +119,12 @@ async function boot() {
     process.stdout.write(`[DEBUG ${nowIso()}] ${args.join(" ")}\n`);
   };
 
-  async function safeClearDir(targetDir) {
-    const resolved = path.resolve(targetDir);
-    const allowed = new Set([
-      path.resolve(THUMB_CACHE_DIR),
-      path.resolve(LIVE_TEMP_DIR),
-    ]);
-    if (!allowed.has(resolved)) {
-      throw new Error(`Directorio no permitido para limpieza: ${resolved}`);
-    }
-    await fs.mkdir(resolved, { recursive: true });
-    const entries = await fs.readdir(resolved, { withFileTypes: true });
-    for (const entry of entries) {
-      const full = path.resolve(resolved, entry.name);
-      if (!full.startsWith(resolved)) continue;
-      await fs.rm(full, { recursive: true, force: true });
-    }
-  }
-
-  async function dirSizeBytes(targetDir) {
-    let total = 0;
-    async function walkSize(dir) {
-      const entries = await fs.readdir(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const full = path.resolve(dir, entry.name);
-        if (entry.isDirectory()) {
-          await walkSize(full);
-          continue;
-        }
-        if (entry.isFile()) {
-          const st = await fs.stat(full);
-          total += Number(st.size || 0);
-        }
-      }
-    }
-    await fs.mkdir(targetDir, { recursive: true });
-    await walkSize(path.resolve(targetDir));
-    return total;
-  }
-
-  const liveProbeCache = new Map();
-  const liveWebJobs = new Map();
-
-  function resolveFilesystemMediaSrc(src) {
-    if (!src.startsWith("/media/")) return null;
-    const relAll = src.slice("/media/".length);
-    const slash = relAll.indexOf("/");
-    if (slash < 1) return null;
-    const rootIdx = Number(relAll.slice(0, slash));
-    const rel = relAll.slice(slash + 1);
-    const mediaRoot = MEDIA_ROOTS[rootIdx];
-    if (!mediaRoot) return null;
-    const abs = path.resolve(mediaRoot, rel);
-    if (!abs.startsWith(mediaRoot)) return null;
-    return { rootIdx, rel, mediaRoot, abs };
-  }
-
-  async function probeLivePhotoMetadata(absVideoPath) {
-    if (liveProbeCache.has(absVideoPath))
-      return liveProbeCache.get(absVideoPath);
-    const result = await new Promise((resolve) => {
-      const args = [
-        "-v",
-        "error",
-        "-print_format",
-        "json",
-        "-show_entries",
-        "format_tags=com.apple.quicktime.content.identifier:stream_tags=com.apple.quicktime.content.identifier",
-        absVideoPath,
-      ];
-      const child = spawn("ffprobe", args, {
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      let out = "";
-      child.stdout.on("data", (d) => {
-        out += String(d || "");
-      });
-      child.on("error", () => resolve(false));
-      child.on("close", () => {
-        try {
-          const parsed = JSON.parse(out || "{}");
-          const fmt =
-            parsed?.format?.tags?.["com.apple.quicktime.content.identifier"];
-          const streamHit =
-            Array.isArray(parsed?.streams) &&
-            parsed.streams.some(
-              (s) => s?.tags?.["com.apple.quicktime.content.identifier"],
-            );
-          resolve(Boolean(fmt || streamHit));
-        } catch {
-          resolve(false);
-        }
-      });
-    });
-    liveProbeCache.set(absVideoPath, result);
-    return result;
-  }
-
-  async function findLiveStillPair(absVideoPath) {
-    const ext = path.extname(absVideoPath).toLowerCase();
-    if (![".mov", ".mp4"].includes(ext)) return null;
-    const base = absVideoPath.slice(0, -ext.length);
-    const candidates = [".jpg", ".jpeg", ".heic", ".heif", ".png"];
-    for (const stillExt of candidates) {
-      const still = `${base}${stillExt}`;
-      if (await pathExists(still)) return still;
-      const stillUpper = `${base}${stillExt.toUpperCase()}`;
-      if (await pathExists(stillUpper)) return stillUpper;
-    }
-    return null;
-  }
-
-  async function detectLivePhotoFilesystem(absVideoPath) {
-    const stillPath = await findLiveStillPair(absVideoPath);
-    if (!stillPath) return null;
-    const hasLiveMetadata = await probeLivePhotoMetadata(absVideoPath);
-    const baseName = path.basename(absVideoPath, path.extname(absVideoPath));
-    const looksLikeIphoneCapture = /^IMG_\d{4,}$/i.test(baseName);
-    if (!hasLiveMetadata && !looksLikeIphoneCapture) return null;
-    return { stillPath };
-  }
-
-  function getLiveWebOutFile(src, v, absVideoPath) {
-    const hash = crypto.createHash("sha1").update(`${src}|${v}|web`).digest("hex");
-    return path.resolve(
-      LIVE_WEB_DIR,
-      `${path.basename(absVideoPath, path.extname(absVideoPath))}_web_${hash.slice(0, 8)}.mp4`,
-    );
-  }
-
-  async function ensureLiveWebVideo(src, v, absVideoPath) {
-    const outFile = getLiveWebOutFile(src, v, absVideoPath);
-    try {
-      const st = await fs.stat(outFile);
-      if (st.isFile() && st.size > 0) return outFile;
-    } catch {}
-
-    const key = `${src}|${v}`;
-    if (!liveWebJobs.has(key)) {
-      liveWebJobs.set(
-        key,
-        (async () => {
-          const args = [
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            absVideoPath,
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a?",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            "-ac",
-            "2",
-            "-movflags",
-            "+faststart",
-            outFile,
-          ];
-          await new Promise((resolve, reject) => {
-            const child = spawn("ffmpeg", args, {
-              stdio: ["ignore", "ignore", "pipe"],
-            });
-            let stderr = "";
-            child.stderr.on("data", (d) => {
-              stderr += String(d || "");
-            });
-            child.on("error", reject);
-            child.on("close", (code) => {
-              if (code === 0) resolve();
-              else reject(new Error(stderr.trim() || `ffmpeg exit ${code}`));
-            });
-          });
-          return outFile;
-        })().finally(() => {
-          liveWebJobs.delete(key);
-        }),
-      );
-    }
-    return liveWebJobs.get(key);
-  }
+  const cacheService = createCacheService({
+    fs,
+    path,
+    thumbCacheDir: THUMB_CACHE_DIR,
+    liveTempDir: LIVE_TEMP_DIR,
+  });
 
   if (!["filesystem", "autoindex", "mixed"].includes(SOURCE_MODE)) {
     throw new Error(
@@ -456,6 +273,29 @@ async function boot() {
     }
   }
 
+  const liveService = createLiveService({
+    fs,
+    path,
+    crypto,
+    createReadStream,
+    mediaRoots: MEDIA_ROOTS,
+    liveSnapshotDir: LIVE_SNAPSHOT_DIR,
+    liveWebDir: LIVE_WEB_DIR,
+    pathExists,
+    serveFile,
+    json,
+    log,
+  });
+  const thumbHandler = createThumbHandler({
+    fs,
+    path,
+    crypto,
+    createReadStream,
+    mediaRoots: MEDIA_ROOTS,
+    thumbCacheDir: THUMB_CACHE_DIR,
+    log,
+  });
+
   async function persistIndex(payload) {
     log(
       `Persisting index temp=${INDEX_TMP} final=${INDEX_FILE} count=${payload.count} version=${payload.version}`,
@@ -496,7 +336,7 @@ async function boot() {
     sourceMode: SOURCE_MODE,
     crypto,
     log,
-    detectLivePhotoFilesystem,
+    detectLivePhotoFilesystem: liveService.detectLivePhotoFilesystem,
   });
 
   async function ensureScan() {
@@ -690,8 +530,8 @@ async function boot() {
           });
         }
         for (const t of selected) {
-          if (t === "thumb-cache") await safeClearDir(THUMB_CACHE_DIR);
-          if (t === "temp-livephotos") await safeClearDir(LIVE_TEMP_DIR);
+          if (t === "thumb-cache") await cacheService.safeClearDir(THUMB_CACHE_DIR);
+          if (t === "temp-livephotos") await cacheService.safeClearDir(LIVE_TEMP_DIR);
         }
         return json(res, 200, {
           ok: true,
@@ -714,8 +554,8 @@ async function boot() {
         return res.end("Method not allowed");
       }
       try {
-        const thumbBytes = await dirSizeBytes(THUMB_CACHE_DIR);
-        const liveBytes = await dirSizeBytes(LIVE_TEMP_DIR);
+        const thumbBytes = await cacheService.dirSizeBytes(THUMB_CACHE_DIR);
+        const liveBytes = await cacheService.dirSizeBytes(LIVE_TEMP_DIR);
         return json(res, 200, {
           ok: true,
           stats: {
@@ -738,257 +578,15 @@ async function boot() {
     }
 
     if (pathname === "/thumb/video") {
-      const src = String(url.searchParams.get("src") || "").trim();
-      const v = String(url.searchParams.get("v") || "0").trim();
-      if (!src) {
-        res.writeHead(400);
-        return res.end("Missing src");
-      }
-      try {
-        const hash = crypto
-          .createHash("sha1")
-          .update(`${src}|${v}`)
-          .digest("hex");
-        const outFile = path.resolve(THUMB_CACHE_DIR, `${hash}.jpg`);
-        try {
-          const st = await fs.stat(outFile);
-          if (st.isFile() && st.size > 0) {
-            res.writeHead(200, {
-              "Content-Type": "image/jpeg",
-              "Cache-Control": "public, max-age=31536000, immutable",
-              "Content-Length": st.size,
-            });
-            return createReadStream(outFile).pipe(res);
-          }
-        } catch {
-          // cache miss
-        }
-
-        let ffmpegInput = src;
-        if (src.startsWith("/media/")) {
-          const relAll = src.slice("/media/".length);
-          const slash = relAll.indexOf("/");
-          if (slash < 1) {
-            res.writeHead(400);
-            return res.end("Bad media src");
-          }
-          const rootIdx = Number(relAll.slice(0, slash));
-          const rel = relAll.slice(slash + 1);
-          const mediaRoot = MEDIA_ROOTS[rootIdx];
-          if (!mediaRoot) {
-            res.writeHead(404);
-            return res.end("Media root not found");
-          }
-          const abs = path.resolve(mediaRoot, rel);
-          if (!abs.startsWith(mediaRoot)) {
-            res.writeHead(403);
-            return res.end("Forbidden");
-          }
-          ffmpegInput = abs;
-        } else if (!/^https?:\/\//i.test(src)) {
-          res.writeHead(400);
-          return res.end("Unsupported src");
-        }
-
-        await new Promise((resolve, reject) => {
-          const args = [
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-ss",
-            "0.15",
-            "-i",
-            ffmpegInput,
-            "-frames:v",
-            "1",
-            "-vf",
-            "scale=240:-2:flags=fast_bilinear",
-            "-q:v",
-            "12",
-            "-f",
-            "mjpeg",
-            outFile,
-          ];
-          const child = spawn("ffmpeg", args, {
-            stdio: ["ignore", "ignore", "pipe"],
-          });
-          let stderr = "";
-          child.stderr.on("data", (d) => {
-            stderr += String(d || "");
-          });
-          child.on("error", reject);
-          child.on("close", (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(stderr.trim() || `ffmpeg exit ${code}`));
-          });
-        });
-
-        const st = await fs.stat(outFile);
-        res.writeHead(200, {
-          "Content-Type": "image/jpeg",
-          "Cache-Control": "public, max-age=31536000, immutable",
-          "Content-Length": st.size,
-        });
-        return createReadStream(outFile).pipe(res);
-      } catch (err) {
-        log(`thumb generation failed src=${src} err=${err.message}`);
-        res.writeHead(404);
-        return res.end("Thumbnail unavailable");
-      }
+      return thumbHandler.handle(req, res, url);
     }
 
     if (pathname === "/live/snapshot") {
-      const src = String(url.searchParams.get("src") || "").trim();
-      const v = String(url.searchParams.get("v") || "0").trim();
-      if (!src) {
-        res.writeHead(400);
-        return res.end("Missing src");
-      }
-      const resolved = resolveFilesystemMediaSrc(src);
-      if (!resolved) {
-        res.writeHead(404);
-        return res.end("Only filesystem media is supported for live snapshot");
-      }
-      try {
-        const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
-        if (!liveInfo) {
-          res.writeHead(404);
-          return res.end("Not a live photo");
-        }
-        const hash = crypto
-          .createHash("sha1")
-          .update(`${src}|${v}|snapshot`)
-          .digest("hex");
-        const outFile = path.resolve(LIVE_SNAPSHOT_DIR, `${hash}.jpg`);
-        try {
-          const st = await fs.stat(outFile);
-          if (st.isFile() && st.size > 0) {
-            res.writeHead(200, {
-              "Content-Type": "image/jpeg",
-              "Cache-Control": "public, max-age=31536000, immutable",
-              "Content-Length": st.size,
-            });
-            return createReadStream(outFile).pipe(res);
-          }
-        } catch {}
-
-        const stillInput = liveInfo.stillPath;
-        const stillExt = path.extname(stillInput).toLowerCase();
-        if ([".jpg", ".jpeg", ".png", ".webp"].includes(stillExt)) {
-          // Use original still directly for maximum fidelity.
-          return serveFile(req, res, stillInput);
-        }
-        const runFfmpeg = (args) =>
-          new Promise((resolve, reject) => {
-            const child = spawn("ffmpeg", args, {
-              stdio: ["ignore", "ignore", "pipe"],
-            });
-            let stderr = "";
-            child.stderr.on("data", (d) => {
-              stderr += String(d || "");
-            });
-            child.on("error", reject);
-            child.on("close", (code) => {
-              if (code === 0) resolve();
-              else reject(new Error(stderr.trim() || `ffmpeg exit ${code}`));
-            });
-          });
-
-        try {
-          await runFfmpeg([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            stillInput,
-            "-map",
-            "0:v:0",
-            "-frames:v",
-            "1",
-            "-q:v",
-            "1",
-            "-f",
-            "mjpeg",
-            outFile,
-          ]);
-        } catch (err) {
-          log(`live snapshot fallback src=${src} err=${err.message}`);
-
-          await runFfmpeg([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            stillInput,
-            "-map",
-            "0:v:0",
-            "-frames:v",
-            "1",
-            "-q:v",
-            "1",
-            "-f",
-            "mjpeg",
-            outFile,
-          ]);
-        }
-        const st = await fs.stat(outFile);
-        res.writeHead(200, {
-          "Content-Type": "image/jpeg",
-          "Cache-Control": "public, max-age=31536000, immutable",
-          "Content-Length": st.size,
-        });
-        return createReadStream(outFile).pipe(res);
-      } catch (err) {
-        log(`live snapshot failed src=${src} err=${err.message}`);
-        res.writeHead(404);
-        return res.end("Live snapshot unavailable");
-      }
+      return liveService.handleSnapshot(req, res, url);
     }
 
     if (pathname === "/live/web-video") {
-      const src = String(url.searchParams.get("src") || "").trim();
-      const v = String(url.searchParams.get("v") || "0").trim();
-      if (!src) {
-        res.writeHead(400);
-        return res.end("Missing src");
-      }
-      const resolved = resolveFilesystemMediaSrc(src);
-      if (!resolved) {
-        res.writeHead(404);
-        return res.end("Only filesystem media is supported for live video");
-      }
-      try {
-        const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
-        if (!liveInfo) {
-          return serveFile(req, res, resolved.abs);
-        }
-        const outFile = getLiveWebOutFile(src, v, resolved.abs);
-        try {
-          const st = await fs.stat(outFile);
-          if (st.isFile() && st.size > 0) {
-            res.writeHead(200, {
-              "Content-Type": "video/mp4",
-              "Cache-Control": "public, max-age=31536000, immutable",
-              "Content-Length": st.size,
-              "Accept-Ranges": "bytes",
-            });
-            return createReadStream(outFile).pipe(res);
-          }
-        } catch {}
-        await ensureLiveWebVideo(src, v, resolved.abs);
-
-        const st = await fs.stat(outFile);
-        res.writeHead(200, {
-          "Content-Type": "video/mp4",
-          "Cache-Control": "public, max-age=31536000, immutable",
-          "Content-Length": st.size,
-          "Accept-Ranges": "bytes",
-        });
-        return createReadStream(outFile).pipe(res);
-      } catch (err) {
-        log(`live web transcode failed src=${src} err=${err.message}`);
-        return serveFile(req, res, resolved.abs);
-      }
+      return liveService.handleWebVideo(req, res, url);
     }
 
     if (pathname === "/live/web-video-prepare") {
@@ -996,26 +594,7 @@ async function boot() {
         res.writeHead(405);
         return res.end("Method not allowed");
       }
-      const src = String(url.searchParams.get("src") || "").trim();
-      const v = String(url.searchParams.get("v") || "0").trim();
-      if (!src) return json(res, 400, { error: "Missing src" });
-      const resolved = resolveFilesystemMediaSrc(src);
-      if (!resolved) return json(res, 404, { error: "Only filesystem media is supported for live video" });
-      try {
-        const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
-        if (!liveInfo) return json(res, 200, { ok: true, live: false });
-        const outFile = getLiveWebOutFile(src, v, resolved.abs);
-        try {
-          const st = await fs.stat(outFile);
-          if (st.isFile() && st.size > 0) {
-            return json(res, 200, { ok: true, live: true, ready: true, url: `/live/web-video?src=${encodeURIComponent(src)}&v=${encodeURIComponent(v)}` });
-          }
-        } catch {}
-        ensureLiveWebVideo(src, v, resolved.abs).catch(() => {});
-        return json(res, 202, { ok: true, live: true, ready: false });
-      } catch (err) {
-        return json(res, 400, { error: err.message || "No se pudo iniciar preparación live" });
-      }
+      return liveService.handlePrepare(res, url);
     }
 
     if (pathname === "/live/web-video-status") {
@@ -1023,25 +602,7 @@ async function boot() {
         res.writeHead(405);
         return res.end("Method not allowed");
       }
-      const src = String(url.searchParams.get("src") || "").trim();
-      const v = String(url.searchParams.get("v") || "0").trim();
-      if (!src) return json(res, 400, { error: "Missing src" });
-      const resolved = resolveFilesystemMediaSrc(src);
-      if (!resolved) return json(res, 404, { error: "Only filesystem media is supported for live video" });
-      try {
-        const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
-        if (!liveInfo) return json(res, 200, { ok: true, live: false, ready: false });
-        const outFile = getLiveWebOutFile(src, v, resolved.abs);
-        try {
-          const st = await fs.stat(outFile);
-          if (st.isFile() && st.size > 0) {
-            return json(res, 200, { ok: true, live: true, ready: true, url: `/live/web-video?src=${encodeURIComponent(src)}&v=${encodeURIComponent(v)}` });
-          }
-        } catch {}
-        return json(res, 200, { ok: true, live: true, ready: false, preparing: liveWebJobs.has(`${src}|${v}`) });
-      } catch (err) {
-        return json(res, 400, { error: err.message || "No se pudo consultar estado live" });
-      }
+      return liveService.handleStatus(res, url);
     }
 
     if (
