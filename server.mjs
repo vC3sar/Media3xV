@@ -124,13 +124,54 @@ async function writeConfig(cfg) {
 }
 
 function normalizeSourceLists(cfg) {
-  const mediaRoots = (Array.isArray(cfg.mediaRoots) && cfg.mediaRoots.length
-    ? cfg.mediaRoots
-    : [cfg.mediaRoot]).filter(Boolean).map(p => path.resolve(String(p)));
-  const autoindexRootUrls = (Array.isArray(cfg.autoindexRootUrls) && cfg.autoindexRootUrls.length
-    ? cfg.autoindexRootUrls
-    : [cfg.autoindexRootUrl]).filter(Boolean).map(u => String(u));
+  const toUnique = values => {
+    const out = [];
+    const seen = new Set();
+    for (const val of values) {
+      const k = String(val);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(k);
+    }
+    return out;
+  };
+  const mediaRoots = toUnique([
+    ...(Array.isArray(cfg.mediaRoots) ? cfg.mediaRoots : []),
+    cfg.mediaRoot
+  ].filter(Boolean).map(p => path.resolve(String(p))));
+  const autoindexRootUrls = toUnique([
+    ...(Array.isArray(cfg.autoindexRootUrls) ? cfg.autoindexRootUrls : []),
+    cfg.autoindexRootUrl
+  ].filter(Boolean).map(u => String(u)));
   return { mediaRoots, autoindexRootUrls };
+}
+
+function entryLabelFromFilesystemRoot(rootPath) {
+  const normalized = String(rootPath).replace(/[\\/]+$/, '');
+  const base = path.basename(normalized);
+  return base || normalized || 'Entrada';
+}
+
+function entryLabelFromAutoindexRoot(rootUrl) {
+  try {
+    const u = new URL(String(rootUrl));
+    const parts = u.pathname.split('/').filter(Boolean);
+    return parts[parts.length - 1] || u.host || u.href;
+  } catch {
+    return String(rootUrl);
+  }
+}
+
+function dedupeFilesByUrl(files) {
+  const out = [];
+  const seen = new Set();
+  for (const file of files) {
+    if (!file?.url) continue;
+    if (seen.has(file.url)) continue;
+    seen.add(file.url);
+    out.push(file);
+  }
+  return out;
 }
 
 async function walk(dir, out = []) {
@@ -301,6 +342,8 @@ async function boot() {
     const files = [];
     for (let rootIdx = 0; rootIdx < MEDIA_ROOTS.length; rootIdx += 1) {
       const mediaRoot = MEDIA_ROOTS[rootIdx];
+      const entryId = `fs:${rootIdx}`;
+      const entryLabel = entryLabelFromFilesystemRoot(mediaRoot);
       const absFiles = await walk(mediaRoot);
       for (const abs of absFiles) {
         const rel = toPosix(path.relative(mediaRoot, abs));
@@ -316,7 +359,9 @@ async function boot() {
           date: dateInfo.date,
           datePatched: dateInfo.patched,
           size: st.size,
-          mtimeMs: Math.floor(st.mtimeMs)
+          mtimeMs: Math.floor(st.mtimeMs),
+          entryId,
+          entryLabel
         });
       }
     }
@@ -325,7 +370,10 @@ async function boot() {
 
   async function buildAutoindexIndex() {
     const files = [];
-    for (const rootUrl of AUTOINDEX_ROOT_URLS) {
+    for (let rootIdx = 0; rootIdx < AUTOINDEX_ROOT_URLS.length; rootIdx += 1) {
+      const rootUrl = AUTOINDEX_ROOT_URLS[rootIdx];
+      const entryId = `ax:${rootIdx}`;
+      const entryLabel = entryLabelFromAutoindexRoot(rootUrl);
       const root = new URL(rootUrl);
       const queue = [root.href];
       const visited = new Set();
@@ -364,7 +412,9 @@ async function boot() {
             date: dateInfo.date,
             datePatched: dateInfo.patched,
             size: 0,
-            mtimeMs: 0
+            mtimeMs: 0,
+            entryId,
+            entryLabel
           });
         }
       }
@@ -374,9 +424,10 @@ async function boot() {
 
   async function buildIndexPayload() {
     log(`Index build start mode=${SOURCE_MODE}`);
-    const files = SOURCE_MODE === 'filesystem'
+    const filesRaw = SOURCE_MODE === 'filesystem'
       ? await buildFilesystemIndex()
       : await buildAutoindexIndex();
+    const files = dedupeFilesByUrl(filesRaw);
     files.sort((a, b) => a.url.localeCompare(b.url));
     const version = crypto.createHash('sha1').update(JSON.stringify(files)).digest('hex').slice(0, 12);
     log(`Index build done mode=${SOURCE_MODE} count=${files.length} version=${version}`);
@@ -463,7 +514,9 @@ async function boot() {
         return json(res, 200, {
           sourceMode: String(liveCfg.sourceMode || SOURCE_MODE).toLowerCase(),
           mediaRoots: liveLists.mediaRoots,
-          autoindexRootUrls: liveLists.autoindexRootUrls
+          autoindexRootUrls: liveLists.autoindexRootUrls,
+          mediaRoot: liveLists.mediaRoots[0] || '',
+          autoindexRootUrl: liveLists.autoindexRootUrls[0] || ''
         });
       }
       if (req.method === 'POST') {
@@ -474,8 +527,20 @@ async function boot() {
           const baseCfg = await readConfig();
           const baseLists = normalizeSourceLists(baseCfg);
           const nextMode = String(payload.sourceMode || baseCfg.sourceMode || SOURCE_MODE).toLowerCase();
-          const nextMediaRoots = Array.isArray(payload.mediaRoots) ? payload.mediaRoots.filter(Boolean) : baseLists.mediaRoots;
-          const nextAutoRoots = Array.isArray(payload.autoindexRootUrls) ? payload.autoindexRootUrls.filter(Boolean) : baseLists.autoindexRootUrls;
+          const nextMediaRootsRaw = [
+            ...(Array.isArray(payload.mediaRoots) ? payload.mediaRoots : []),
+            payload.mediaRoot
+          ].filter(Boolean).map(v => path.resolve(String(v)));
+          const nextAutoRootsRaw = [
+            ...(Array.isArray(payload.autoindexRootUrls) ? payload.autoindexRootUrls : []),
+            payload.autoindexRootUrl
+          ].filter(Boolean).map(v => String(v));
+          const nextMediaRoots = nextMediaRootsRaw.length
+            ? [...new Set(nextMediaRootsRaw)]
+            : baseLists.mediaRoots;
+          const nextAutoRoots = nextAutoRootsRaw.length
+            ? [...new Set(nextAutoRootsRaw)]
+            : baseLists.autoindexRootUrls;
           if (!['filesystem', 'autoindex'].includes(nextMode)) {
             return json(res, 400, { error: 'sourceMode inválido' });
           }
@@ -489,7 +554,9 @@ async function boot() {
             ...baseCfg,
             sourceMode: nextMode,
             mediaRoots: nextMediaRoots,
-            autoindexRootUrls: nextAutoRoots
+            autoindexRootUrls: nextAutoRoots,
+            mediaRoot: nextMediaRoots[0] || '',
+            autoindexRootUrl: nextAutoRoots[0] || ''
           };
           await writeConfig(saveCfg);
           return json(res, 200, { ok: true, requiresRestart: true });

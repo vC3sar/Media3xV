@@ -52,7 +52,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
   #sidebar { transform: translateX(-100%); }
   #sidebar.open { transform: translateX(0); box-shadow: 0 0 60px rgba(0,0,0,0.8); }
   #main { margin-left: 0; }
-  #overlay { display: block !important; }
+  #overlay.open { display: block !important; }
 }
 
 /* ── SIDEBAR NAV ── */
@@ -441,6 +441,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
 
   <!-- SUBBAR -->
   <div id="subbar">
+    <div id="entryFilterWrap" style="display:none;align-items:center;gap:6px;">
+      <label for="entryFilter" style="font-size:11px;color:var(--muted);">Entrada</label>
+      <select id="entryFilter" class="tbtn" style="justify-content:flex-start;min-width:180px;">
+        <option value="all">Todas</option>
+      </select>
+    </div>
     <div id="statsRow" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;flex:1;"></div>
   </div>
 
@@ -579,10 +585,12 @@ let currentSort = 'date-desc';
 let lastSort = 'date-desc';
 let currentGroup = 'date';
 let currentType = 'all';
+let currentEntry = 'all';
 let dragSrc = null;
 let renderedGroups = 0, groupKeys = [], groupMap = {};
 let vZoom = 1, vOffX = 0, vOffY = 0, vDragging = false, vLastX = 0, vLastY = 0;
 let currentViewerIdx = 0;
+let touchStartX = 0, touchStartY = 0, touchLastX = 0, touchLastY = 0, touchTracking = false;
 let currentIndexVersion = null;
 let indexPollTimer = null;
 let indexRetryCount = 0;
@@ -672,11 +680,11 @@ function requestVideoThumbPreview(el, src, delayMs = VIDEO_THUMB_DEFER_MS, force
 // ── MOBILE SIDEBAR ───────────────────────────────────────────
 function openSidebar() {
   document.getElementById('sidebar').classList.add('open');
-  document.getElementById('overlay').style.display = 'block';
+  document.getElementById('overlay').classList.add('open');
 }
 function closeSidebar() {
   document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('overlay').style.display = 'none';
+  document.getElementById('overlay').classList.remove('open');
 }
 
 // Check if mobile
@@ -886,8 +894,48 @@ function normalizeIndexedFile(f) {
     name,
     type,
     date: normalizedDate.value,
-    size: Number.isFinite(f.size) ? f.size : 0
+    size: Number.isFinite(f.size) ? f.size : 0,
+    entryId: (typeof f?.entryId === 'string' && f.entryId.trim()) ? f.entryId.trim() : 'entry:0',
+    entryLabel: (typeof f?.entryLabel === 'string' && f.entryLabel.trim()) ? f.entryLabel.trim() : 'Entrada'
   };
+}
+
+function updateEntryFilterUI() {
+  const wrap = document.getElementById('entryFilterWrap');
+  const sel = document.getElementById('entryFilter');
+  if (!wrap || !sel) return;
+
+  const entryMap = new Map();
+  for (const f of allFiles) {
+    if (!f?.entryId) continue;
+    if (!entryMap.has(f.entryId)) entryMap.set(f.entryId, f.entryLabel || f.entryId);
+  }
+  const entries = [...entryMap.entries()];
+
+  sel.innerHTML = '';
+  const optAll = document.createElement('option');
+  optAll.value = 'all';
+  optAll.textContent = 'Todas';
+  sel.appendChild(optAll);
+  entries.forEach(([id, label]) => {
+    const o = document.createElement('option');
+    o.value = id;
+    o.textContent = label;
+    sel.appendChild(o);
+  });
+
+  if (entries.length <= 1) {
+    currentEntry = 'all';
+    sel.value = 'all';
+    sel.disabled = true;
+    wrap.style.display = 'none';
+    return;
+  }
+
+  wrap.style.display = 'flex';
+  sel.disabled = false;
+  if (currentEntry !== 'all' && !entryMap.has(currentEntry)) currentEntry = 'all';
+  sel.value = currentEntry;
 }
 
 async function loadIndex() {
@@ -920,6 +968,7 @@ function indexBackoffMs() {
 function applyNewFileSet(nextFiles, source) {
   const prevCount = allFiles.length;
   allFiles = nextFiles;
+  updateEntryFilterUI();
   renderedGroups = 0;
   groupKeys = [];
   groupMap = {};
@@ -949,6 +998,7 @@ function applyFilters() {
 
   filteredFiles = allFiles.filter(f =>
     (currentType === 'all' || f.type === currentType) &&
+    (currentEntry === 'all' || f.entryId === currentEntry) &&
     (!q || f.name.toLowerCase().includes(q) || f.url.toLowerCase().includes(q))
   );
 
@@ -1486,6 +1536,44 @@ window.addEventListener('mousemove', e => {
 });
 window.addEventListener('mouseup', () => { vDragging = false; });
 
+// Mobile swipe navigation (images only)
+vStage.addEventListener('touchstart', e => {
+  if (window.innerWidth > 768) return;
+  if (document.getElementById('viewer').style.display === 'none') return;
+  const f = filteredFiles[currentViewerIdx];
+  if (!f || f.type !== 'image') return;
+  const t = e.changedTouches?.[0];
+  if (!t) return;
+  touchTracking = true;
+  touchStartX = t.clientX;
+  touchStartY = t.clientY;
+  touchLastX = t.clientX;
+  touchLastY = t.clientY;
+}, { passive: true });
+
+vStage.addEventListener('touchmove', e => {
+  if (!touchTracking) return;
+  const t = e.changedTouches?.[0];
+  if (!t) return;
+  touchLastX = t.clientX;
+  touchLastY = t.clientY;
+}, { passive: true });
+
+vStage.addEventListener('touchend', () => {
+  if (!touchTracking) return;
+  touchTracking = false;
+  const dx = touchLastX - touchStartX;
+  const dy = touchLastY - touchStartY;
+  const absX = Math.abs(dx);
+  const absY = Math.abs(dy);
+  const SWIPE_X_PX = 48;
+  const DIRECTION_RATIO = 1.2;
+  if (absX < SWIPE_X_PX) return;
+  if (absX < absY * DIRECTION_RATIO) return;
+  if (dx < 0) viewerNav(1);
+  else viewerNav(-1);
+}, { passive: true });
+
 // Keyboard
 document.addEventListener('keydown', e => {
   if (document.getElementById('viewer').style.display === 'none') return;
@@ -1511,6 +1599,10 @@ function toast(msg, ms = 2200) {
 
 // ── EVENTS ────────────────────────────────────────────────────
 document.getElementById('search').addEventListener('input', applyFilters);
+document.getElementById('entryFilter').addEventListener('change', e => {
+  currentEntry = e.target.value || 'all';
+  applyFilters();
+});
 
 // ── INIT ──────────────────────────────────────────────────────
 (async () => {
