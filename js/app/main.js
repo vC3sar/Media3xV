@@ -1781,7 +1781,7 @@ async function mountThumbWithSwap(el, file, src, level = 'u', blurPx = 0) {
 
     // Commit only after successful decode/load; keep previous image until now.
     img.dataset.objurl = objUrl;
-    img.style.cssText = `width:100%;height:100%;object-fit:cover;border-radius:inherit;${blurPx > 0 ? `filter:blur(${blurPx}px);transform:scale(1.02);` : 'filter:none;transform:none;'}transition:filter 180ms ease,transform 180ms ease,opacity 180ms ease;`;
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:inherit;filter:none;transform:none;transition:opacity 180ms ease;';
     const prevImgs = [...el.querySelectorAll('img[data-objurl]')];
     el.innerHTML = '';
     el.appendChild(img);
@@ -1900,7 +1900,7 @@ function hydrateThumbNode(el, file) {
       ? file.thumb512Url.trim()
       : ((typeof file.thumbUrl === 'string' && file.thumbUrl.trim()) ? file.thumbUrl.trim() : t128);
 
-    mountThumbWithSwap(el, file, t128, '128', 6).then(() => {
+    mountThumbWithSwap(el, file, t128, '128', 0).then(() => {
       if (!document.body.contains(el)) return;
       if (el.dataset.hydrationToken !== hydrationToken) return;
       el.dataset.failed = '0';
