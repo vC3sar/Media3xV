@@ -331,10 +331,12 @@ async function boot() {
 
   const buildIndexPayload = buildIndexPayloadFactory({
     fs,
+    path,
     mediaRoots: MEDIA_ROOTS,
     autoindexRootUrls: AUTOINDEX_ROOT_URLS,
     sourceMode: SOURCE_MODE,
     crypto,
+    thumbCacheDir: THUMB_CACHE_DIR,
     log,
     detectLivePhotoFilesystem: liveService.detectLivePhotoFilesystem,
   });
@@ -406,6 +408,50 @@ async function boot() {
           generatedAt: state.generatedAt,
           count: state.count,
           files: state.files,
+        });
+      }
+      if (state.status === "error") {
+        return json(res, 500, {
+          status: "error",
+          message: state.lastError || "Index error",
+        });
+      }
+      ensureScan().catch(() => {});
+      return json(res, 202, {
+        status: "indexing",
+        refreshing: state.refreshing,
+        version: state.version,
+        generatedAt: state.generatedAt,
+        count: state.count,
+      });
+    }
+
+    if (pathname === "/api/media-index-lite") {
+      if (state.status === "ready") {
+        const files = state.files.map((f) => ({
+          id: f.id || null,
+          url: f.url,
+          name: f.name,
+          type: f.type,
+          date: f.date,
+          width: Number.isFinite(f.width) ? f.width : null,
+          height: Number.isFinite(f.height) ? f.height : null,
+          thumb128Url: typeof f.thumb128Url === "string" ? f.thumb128Url : "",
+          thumb512Url: typeof f.thumb512Url === "string" ? f.thumb512Url : "",
+          thumbUrl: typeof f.thumbUrl === "string" ? f.thumbUrl : "",
+          entryId: f.entryId,
+          entryLabel: f.entryLabel,
+          size: Number.isFinite(f.size) ? f.size : 0,
+          mtimeMs: Number.isFinite(f.mtimeMs) ? f.mtimeMs : 0,
+          livePhoto: f.livePhoto || null,
+        }));
+        return json(res, 200, {
+          status: "ready",
+          refreshing: state.refreshing,
+          version: state.version,
+          generatedAt: state.generatedAt,
+          count: files.length,
+          files,
         });
       }
       if (state.status === "error") {
@@ -578,7 +624,10 @@ async function boot() {
     }
 
     if (pathname === "/thumb/video") {
-      return thumbHandler.handle(req, res, url);
+      return thumbHandler.handleVideo(req, res, url);
+    }
+    if (pathname === "/thumb/image") {
+      return thumbHandler.handleImage(req, res, url);
     }
 
     if (pathname === "/live/snapshot") {

@@ -29,6 +29,7 @@ tailwind.config = { darkMode: 'class' }
   --danger:    #ef4444;
   --font: 'DM Sans', sans-serif;
   --mono: 'DM Mono', monospace;
+  --topbar-h: 56px;
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { color-scheme: dark; scroll-behavior: smooth; }
@@ -53,6 +54,75 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
   #sidebar.open { transform: translateX(0); box-shadow: 0 0 60px rgba(0,0,0,0.8); }
   #main { margin-left: 0; }
   #overlay.open { display: block !important; }
+  #topbar {
+    height: auto;
+    min-height: 56px;
+    padding: 10px 12px;
+    display: grid;
+    grid-template-columns: auto 1fr auto auto auto;
+    grid-template-areas:
+      "ham spacer sort view cfg"
+      "select select del del del"
+      "search search search search search";
+    gap: 8px;
+    align-items: center;
+    overflow-x: clip;
+  }
+  #hamBtn { grid-area: ham; }
+  .search-wrap {
+    grid-area: search;
+    order: initial;
+    flex: initial;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+  #sortBtn { grid-area: sort; }
+  #viewBtn { grid-area: view; }
+  #selectModeBtn { grid-area: select; }
+  #deleteSelectedBtn { grid-area: del; }
+  #cfgBtn { grid-area: cfg; }
+  #topbar > div[style*="flex:1"] {
+    grid-area: spacer;
+    display: block;
+    min-width: 0;
+  }
+  #topbar .tbtn {
+    min-height: 34px;
+    padding: 6px 8px;
+    min-width: 0;
+  }
+  #topbar .tbtn span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #selectModeBtn, #deleteSelectedBtn {
+    width: 100%;
+    justify-content: center;
+  }
+  #topbar .search-wrap input {
+    padding-top: 9px;
+    padding-bottom: 9px;
+  }
+  #subbar {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+  #entryFilterWrap {
+    width: 100%;
+  }
+  #entryFilter {
+    width: 100%;
+    min-width: 0 !important;
+  }
+  #statsRow {
+    width: 100%;
+  }
+  #zoomBar {
+    bottom: 14px;
+    right: 14px;
+  }
 }
 
 /* ── SIDEBAR NAV ── */
@@ -119,6 +189,26 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
 .media-card:hover { border-color: var(--border-h); transform: translateY(-1px); }
 .media-card:hover .card-overlay { opacity: 1; }
 .media-card:active { transform: scale(0.98); }
+.media-card.selected {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px rgba(91,110,245,0.35) inset;
+}
+.sel-indicator {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--accent);
+  border: 1px solid rgba(255,255,255,0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+  z-index: 3;
+}
 
 .card-overlay {
   position: absolute; inset: 0; opacity: 0;
@@ -271,6 +361,17 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
   cursor: pointer; transition: background 0.15s, border-color 0.15s;
 }
 .list-row:hover { background: var(--card-h); border-color: var(--border-h); }
+.list-row.selected {
+  border-color: var(--accent) !important;
+  background: rgba(91,110,245,0.12);
+}
+.list-row .sel-indicator {
+  position: static;
+  margin-right: 8px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
 .list-thumb {
   width: 44px; height: 44px; border-radius: 8px;
   object-fit: cover; background: var(--panel); flex-shrink: 0; overflow: hidden;
@@ -289,8 +390,72 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
 #toast.show { opacity: 1; transform: translateY(0); }
 
 /* ── RESPONSIVE SUBHEADER ── */
-#subbar { padding: 10px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-@media (max-width: 480px) { #subbar { padding: 8px 12px; } #topbar { padding: 0 12px; } #zoomBar { bottom: 16px; right: 16px; } }
+#subbar {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 19;
+  background: rgba(8,10,15,0.94);
+  backdrop-filter: blur(12px);
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+#app { overflow-anchor: none; }
+@media (max-width: 480px) {
+  #subbar { padding: 8px 10px; }
+  #topbar { padding: 8px 10px; }
+  .tbtn { padding: 6px 8px; font-size: 11px; }
+  #sortBtn span#sortLabel,
+  #selectModeBtn span#selectModeLbl,
+  #deleteSelectedBtn span#deleteSelectedLbl {
+    max-width: 84px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #zoomBar { bottom: 12px; right: 12px; padding: 8px 10px; }
+  #zoomSlider { width: 84px; }
+  #viewerTopBar { padding: 0 10px; }
+  #viewerBottomBar { padding: 0 10px; }
+}
+
+/* Final mobile bar layout override (keep at end to win cascade) */
+@media (max-width: 768px) {
+  #topbar {
+    display: grid !important;
+    grid-template-columns: auto minmax(0,1fr) auto auto auto;
+    grid-template-areas:
+      "ham spacer sort view cfg"
+      "search search search search search"
+      "select select del del del";
+    gap: 8px;
+    height: auto !important;
+    min-height: 56px;
+    padding: 10px 12px;
+    align-items: center;
+  }
+  #hamBtn { grid-area: ham; }
+  #sortBtn { grid-area: sort; }
+  #viewBtn { grid-area: view; }
+  #cfgBtn { grid-area: cfg; }
+  #selectModeBtn { grid-area: select; width: 100%; justify-content: center; min-width: 0; }
+  #deleteSelectedBtn { grid-area: del; width: 100%; justify-content: center; min-width: 0; }
+  .search-wrap { grid-area: search; width: 100%; max-width: 100%; min-width: 0; }
+  #topbar > div[style*="flex:1"] { grid-area: spacer; min-width: 0; }
+  #topbar .tbtn { min-width: 0; }
+  #topbar .tbtn span {
+    max-width: 92px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #subbar {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+}
 
 /* ── DRAG OVER ── */
 .drag-over { outline: 2px dashed var(--accent) !important; outline-offset: 2px; }
@@ -443,6 +608,14 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
     <button class="tbtn" id="viewBtn" onclick="toggleLayout()" title="Cambiar vista">
       <svg id="viewIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
     </button>
+    <button class="tbtn" id="selectModeBtn" onclick="toggleSelectMode()" title="Seleccionar archivos">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <span id="selectModeLbl">Seleccionar</span>
+    </button>
+    <button class="tbtn" id="deleteSelectedBtn" onclick="deleteSelectedFiles()" title="Eliminar seleccionadas" style="display:none;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+      <span id="deleteSelectedLbl">Eliminar (0)</span>
+    </button>
     <button class="tbtn" id="cfgBtn" onclick="openConfigModal()" title="Configuración">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0A1.65 1.65 0 0 0 9.91 3H10a2 2 0 1 1 4 0h.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0A1.65 1.65 0 0 0 21 9.91H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
@@ -455,6 +628,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
       <select id="entryFilter" class="tbtn" style="justify-content:flex-start;min-width:180px;">
         <option value="all">Todas</option>
       </select>
+    </div>
+    <div id="selectionChip" class="pill" style="display:none;">
+      <span class="dot" style="background:var(--accent);"></span>
+      <span id="selectionChipText">0 seleccionados</span>
     </div>
     <div id="statsRow" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;flex:1;"></div>
   </div>
@@ -478,7 +655,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
   <button onclick="stepZoom(-1)" title="Cuadrícula más pequeña">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px"><line x1="5" y1="12" x2="19" y2="12"/></svg>
   </button>
-  <input type="range" id="zoomSlider" min="0" max="4" step="1" value="2" oninput="setZoomBySlider(this.value)">
+  <input type="range" id="zoomSlider" min="0" max="4" step="1" value="3" oninput="setZoomBySlider(this.value)">
   <button onclick="stepZoom(1)" title="Cuadrícula más grande">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
   </button>
@@ -594,7 +771,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
 
 <script>
 // ── CONFIG ──────────────────────────────────────────────────
-const INDEX_URL = "/api/media-index";
+const INDEX_URL = "/api/media-index-lite";
 const CONFIG_URL = "/api/config";
 const CACHE_CLEANUP_URL = "/api/cache-cleanup";
 const CACHE_STATS_URL = "/api/cache-stats";
@@ -610,7 +787,9 @@ const SIZES = ['XS','S','M','L','XL'];
 const SIZE_PX = [80, 120, 160, 220, 300];
 
 let allFiles = [], filteredFiles = [];
-let sizeIdx = 2;
+let sizeIdx = 3;
+let lastDesktopSizeIdx = 3;
+let mobileGridInitialized = false;
 let layoutMode = 'grid';
 let currentSort = 'date-desc';
 let lastSort = 'date-desc';
@@ -657,6 +836,53 @@ let thumbPrewarmQueue = [];
 let thumbPrewarmActive = 0;
 let thumbPrewarmSeen = new Set();
 let thumbPrewarmInFlight = new Set();
+const PRELOAD_WINDOW = 2;
+
+class PreloadManager {
+  constructor(options = {}) {
+    this.maxConcurrent = Number.isInteger(options.maxConcurrent) ? options.maxConcurrent : 2;
+    this.queue = [];
+    this.active = 0;
+    this.generation = 0;
+    this.seen = new Set();
+  }
+
+  reset() {
+    this.generation += 1;
+    this.queue = [];
+  }
+
+  enqueue(task) {
+    if (!task?.key || this.seen.has(task.key)) return;
+    this.seen.add(task.key);
+    this.queue.push({ ...task, generation: this.generation });
+    this.queue.sort((a, b) => (a.priority || 99) - (b.priority || 99));
+    this.drain();
+  }
+
+  drain() {
+    while (this.active < this.maxConcurrent && this.queue.length > 0) {
+      const task = this.queue.shift();
+      if (!task) continue;
+      this.active += 1;
+      Promise.resolve()
+        .then(() => {
+          if (task.generation !== this.generation) return;
+          return task.run?.();
+        })
+        .catch(() => {})
+        .finally(() => {
+          this.active -= 1;
+          this.drain();
+        });
+    }
+  }
+}
+
+const preloadManager = new PreloadManager({ maxConcurrent: 2 });
+let selectionMode = false;
+let selectedUrls = new Set();
+let lastSelectedUrl = '';
 
 function videoTaskKey(src, mode = 'thumb') {
   return `video:${mode}:${src}`;
@@ -706,6 +932,89 @@ function toggleViewerFavorite() {
   toggleFavorite(f.url);
   updateViewerFavoriteBtn(f);
   applyFilters();
+}
+
+function updateSelectionUI() {
+  const modeBtn = document.getElementById('selectModeBtn');
+  const modeLbl = document.getElementById('selectModeLbl');
+  const delBtn = document.getElementById('deleteSelectedBtn');
+  const delLbl = document.getElementById('deleteSelectedLbl');
+  const chip = document.getElementById('selectionChip');
+  const chipText = document.getElementById('selectionChipText');
+  if (modeBtn) modeBtn.classList.toggle('active', selectionMode);
+  if (modeLbl) modeLbl.textContent = selectionMode ? 'Seleccionando' : 'Seleccionar';
+  if (delBtn) delBtn.style.display = selectionMode ? 'flex' : 'none';
+  if (delLbl) delLbl.textContent = `Eliminar (${selectedUrls.size})`;
+  if (chip) chip.style.display = selectionMode ? 'inline-flex' : 'none';
+  if (chipText) chipText.textContent = `${selectedUrls.size} seleccionado${selectedUrls.size === 1 ? '' : 's'}`;
+  syncStickyBars();
+}
+
+function toggleSelectMode() {
+  selectionMode = !selectionMode;
+  if (!selectionMode) {
+    selectedUrls.clear();
+    lastSelectedUrl = '';
+  }
+  updateSelectionUI();
+  invalidateVirtualRowCache();
+  virtualState.lastStartIdx = -1;
+  scheduleVirtualRender();
+}
+
+function getFilteredIndexByUrl(url) {
+  return filteredFiles.findIndex(f => f?.url === url);
+}
+
+function selectRange(fromUrl, toUrl) {
+  const a = getFilteredIndexByUrl(fromUrl);
+  const b = getFilteredIndexByUrl(toUrl);
+  if (a < 0 || b < 0) return;
+  const start = Math.min(a, b);
+  const end = Math.max(a, b);
+  for (let i = start; i <= end; i += 1) {
+    const u = filteredFiles[i]?.url;
+    if (u) selectedUrls.add(u);
+  }
+}
+
+function handleItemSelection(file, evt) {
+  if (!selectionMode || !file?.url) return false;
+  const url = file.url;
+  if (evt?.shiftKey && lastSelectedUrl) {
+    selectRange(lastSelectedUrl, url);
+  } else if (evt?.ctrlKey || evt?.metaKey) {
+    if (selectedUrls.has(url)) selectedUrls.delete(url);
+    else selectedUrls.add(url);
+    lastSelectedUrl = url;
+  } else {
+    // Click normal in selection mode: toggle without clearing others.
+    if (selectedUrls.has(url)) selectedUrls.delete(url);
+    else selectedUrls.add(url);
+    lastSelectedUrl = url;
+  }
+  updateSelectionUI();
+  invalidateVirtualRowCache();
+  virtualState.lastStartIdx = -1;
+  scheduleVirtualRender();
+  return true;
+}
+
+function deleteSelectedFiles() {
+  if (!selectionMode) return;
+  if (!selectedUrls.size) {
+    toast('No hay archivos seleccionados');
+    return;
+  }
+  const count = selectedUrls.size;
+  const ok = window.confirm(`¿Eliminar ${count} archivo${count !== 1 ? 's' : ''} de la lista actual?`);
+  if (!ok) return;
+  allFiles = allFiles.filter(f => !selectedUrls.has(f.url));
+  selectedUrls.clear();
+  lastSelectedUrl = '';
+  updateSelectionUI();
+  applyFilters();
+  toast(`${count} archivo${count !== 1 ? 's' : ''} eliminado${count !== 1 ? 's' : ''}`);
 }
 
 function queueVideoThumbLoad(el, src) {
@@ -852,13 +1161,82 @@ function closeSidebar() {
   document.getElementById('overlay').classList.remove('open');
 }
 
+let stickyScrollAt = 0;
+let stickySyncTimer = null;
+
+function isIosWebkitLike() {
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPhone|iPad|iPod/i.test(ua)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return isIOS;
+}
+
 // Check if mobile
 function checkMobile() {
   const isMobile = window.innerWidth <= 768;
   document.getElementById('hamBtn').style.display = isMobile ? 'flex' : 'none';
+  syncStickyBars();
 }
 window.addEventListener('resize', checkMobile);
 checkMobile();
+
+function syncStickyBars() {
+  const topbar = document.getElementById('topbar');
+  if (!topbar) return;
+  // iOS/WebKit: while scrolling, URL bar transitions trigger rapid viewport changes.
+  // Updating sticky offsets in that moment can cause visible snap/jump.
+  if (isIosWebkitLike() && window.innerWidth <= 768) {
+    if (Date.now() - stickyScrollAt < 420) {
+      if (stickySyncTimer) clearTimeout(stickySyncTimer);
+      stickySyncTimer = setTimeout(() => {
+        stickySyncTimer = null;
+        syncStickyBars();
+      }, 260);
+      return;
+    }
+  }
+  const h = Math.max(56, Math.ceil(topbar.getBoundingClientRect().height || topbar.offsetHeight || 56));
+  const root = document.documentElement;
+  const prev = Number.parseInt(getComputedStyle(root).getPropertyValue('--topbar-h'), 10) || 56;
+  if (Math.abs(prev - h) < 2) return;
+  root.style.setProperty('--topbar-h', `${h}px`);
+}
+window.addEventListener('resize', syncStickyBars, { passive: true });
+window.addEventListener('scroll', () => { stickyScrollAt = Date.now(); }, { passive: true });
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncStickyBars, { passive: true });
+  window.visualViewport.addEventListener('scroll', () => { stickyScrollAt = Date.now(); }, { passive: true });
+}
+
+function enforceMobileGridSize() {
+  const isMobile = window.innerWidth <= 768;
+  const slider = document.getElementById('zoomSlider');
+  if (isMobile) {
+    if (!mobileGridInitialized) {
+      if (sizeIdx !== 2) lastDesktopSizeIdx = sizeIdx;
+      sizeIdx = 2; // M on phones
+      if (slider) slider.value = '2';
+      document.getElementById('zoomPct').textContent = SIZES[sizeIdx];
+      mobileGridInitialized = true;
+      if (groupKeys.length) {
+        rebuildVirtualRows();
+        scheduleVirtualRender();
+      }
+    }
+    return;
+  }
+  mobileGridInitialized = false;
+  if (sizeIdx === 2 && lastDesktopSizeIdx !== 2) {
+    sizeIdx = lastDesktopSizeIdx;
+    if (slider) slider.value = String(sizeIdx);
+    document.getElementById('zoomPct').textContent = SIZES[sizeIdx];
+    if (groupKeys.length) {
+      rebuildVirtualRows();
+      scheduleVirtualRender();
+    }
+  }
+}
+window.addEventListener('resize', enforceMobileGridSize);
 
 // ── DATE GUESS ───────────────────────────────────────────────
 function guessDate(name, path) {
@@ -1229,12 +1607,21 @@ function normalizeIndexedFile(f) {
   if (normalizedDate.fallback) dataMetrics.fallbackDateCount += 1;
   dataMetrics.validCount += 1;
   return {
+    id: (typeof f?.id === 'string' && f.id.trim()) ? f.id.trim() : rawUrl,
     url: rawUrl,
     name,
     type,
     date: normalizedDate.value,
+    width: Number.isFinite(f?.width) ? Number(f.width) : null,
+    height: Number.isFinite(f?.height) ? Number(f.height) : null,
     size: Number.isFinite(f.size) ? f.size : 0,
     thumbUrl: (typeof f?.thumbUrl === 'string' && f.thumbUrl.trim()) ? f.thumbUrl.trim() : '',
+    thumb128Url: (typeof f?.thumb128Url === 'string' && f.thumb128Url.trim())
+      ? f.thumb128Url.trim()
+      : ((typeof f?.thumbUrl === 'string' && f.thumbUrl.trim()) ? f.thumbUrl.trim() : ''),
+    thumb512Url: (typeof f?.thumb512Url === 'string' && f.thumb512Url.trim())
+      ? f.thumb512Url.trim()
+      : ((typeof f?.thumbUrl === 'string' && f.thumbUrl.trim()) ? f.thumbUrl.trim() : ''),
     livePhoto: (f?.livePhoto && typeof f.livePhoto === 'object' && f.livePhoto.enabled)
       ? {
         enabled: true,
@@ -1342,6 +1729,12 @@ function startIndexPolling() {
 
 // ── FILTER + SORT + GROUP ────────────────────────────────────
 function applyFilters() {
+  if (selectedUrls.size) {
+    const allSet = new Set(allFiles.map(f => f.url));
+    for (const u of [...selectedUrls]) {
+      if (!allSet.has(u)) selectedUrls.delete(u);
+    }
+  }
   const q = document.getElementById('search').value.toLowerCase();
   const isLivePhoto = f => Boolean(f?.type === 'video' && f?.livePhoto?.enabled);
   const typeMatch = (f) => {
@@ -1520,7 +1913,9 @@ function buildGroup(label, files) {
 
 // ── GRID ─────────────────────────────────────────────────────
 function buildGrid(files) {
-  const px = SIZE_PX[sizeIdx];
+  const gridGap = 6;
+  const appWidthNow = Math.max(320, app.clientWidth || 320);
+  const cellWidthNow = Math.max(40, Math.floor((appWidthNow - (gridGap * (virtualState.gridCols - 1))) / virtualState.gridCols));
   const g = document.createElement('div');
   g.style.cssText = `display:grid;grid-template-columns:repeat(auto-fill,minmax(${px}px,1fr));gap:6px;`;
   files.forEach(f => {
@@ -1733,12 +2128,14 @@ function reorder(srcUrl, dstUrl) {
 const zLabels = SIZE_PX.map((_, i) => SIZES[i]);
 function stepZoom(d) {
   sizeIdx = Math.max(0, Math.min(4, sizeIdx + d));
+  lastDesktopSizeIdx = sizeIdx;
   document.getElementById('zoomSlider').value = sizeIdx;
   document.getElementById('zoomPct').textContent = SIZES[sizeIdx];
   applyFilters();
 }
 function setZoomBySlider(v) {
   sizeIdx = +v;
+  lastDesktopSizeIdx = sizeIdx;
   document.getElementById('zoomPct').textContent = SIZES[sizeIdx];
   applyFilters();
 }
@@ -1801,9 +2198,44 @@ function openViewer(idx) {
   currentViewerIdx = idx;
   vZoom = 1; vOffX = 0; vOffY = 0;
   suspendThumbLoading(true);
+  preloadManager.reset();
   renderViewer();
   document.getElementById('viewer').style.display = 'flex';
   document.body.style.overflow = 'hidden';
+}
+
+function preloadViewerNeighbors(centerIdx) {
+  if (!Number.isInteger(centerIdx)) return;
+  preloadManager.reset();
+  const targets = [];
+  for (let d = 1; d <= PRELOAD_WINDOW; d += 1) {
+    targets.push(centerIdx + d, centerIdx - d);
+  }
+  let prio = 0;
+  for (const idx of targets) {
+    const f = filteredFiles[idx];
+    if (!f) continue;
+    if (f.type === 'image') {
+      const t512 = f.thumb512Url || f.thumbUrl || '';
+      if (t512) {
+        preloadManager.enqueue({
+          key: `t512:${f.id || f.url}`,
+          priority: prio,
+          run: async () => { await getThumbObjectUrl(f, t512, '512'); },
+        });
+      }
+      preloadManager.enqueue({
+        key: `origwarm:${f.id || f.url}`,
+        priority: prio + 1,
+        run: async () => {
+          try {
+            await fetch(f.url, { headers: { Range: 'bytes=0-65535' }, cache: 'no-store' });
+          } catch (_) {}
+        },
+      });
+    }
+    prio += 1;
+  }
 }
 
 function renderViewer() {
@@ -1833,8 +2265,17 @@ function renderViewer() {
     viewer.classList.remove('video-mode');
     img.style.display = 'block';
     img.removeAttribute('src');
+    const t512 = f.thumb512Url || f.thumbUrl || f.url;
+    window.MediaLoader.loadImageWithRetry(t512, { retries: 1, retryDelayMs: 120 }).then(loaded => {
+      if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
+      img.style.opacity = '0.85';
+      img.src = loaded.src;
+      img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
+      document.getElementById('viewerZoomLbl').textContent = Math.round(vZoom*100)+'%';
+    }).catch(() => {});
     window.MediaLoader.loadImageWithRetry(f.url, { retries: 2, retryDelayMs: 200 }).then(loaded => {
       if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
+      img.style.opacity = '1';
       img.src = loaded.src;
       img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
       document.getElementById('viewerZoomLbl').textContent = Math.round(vZoom*100)+'%';
@@ -1842,6 +2283,7 @@ function renderViewer() {
       if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
       toast('No se pudo cargar la imagen');
     });
+    preloadViewerNeighbors(currentViewerIdx);
   } else if (f.type === 'video') {
     viewer.classList.add('video-mode');
     viewerVideoPerf = { openAt: nowMs(), lastPlayingAt: 0 };
@@ -1892,6 +2334,7 @@ function viewerNav(d) {
   if (n < 0 || n >= filteredFiles.length) return;
   currentViewerIdx = n; vZoom = 1; vOffX = 0; vOffY = 0;
   renderViewer();
+  preloadViewerNeighbors(currentViewerIdx);
 }
 
 function viewerZoom(d) {
@@ -1991,9 +2434,776 @@ document.getElementById('entryFilter').addEventListener('change', e => {
   currentEntry = e.target.value || 'all';
   applyFilters();
 });
+updateSelectionUI();
+
+// ── VIRTUAL RENDER + IDB THUMB CACHE ────────────────────────
+const THUMB_DB_NAME = 'media3xv-thumbs';
+const THUMB_DB_STORE = 'thumbs';
+const THUMB_DB_VERSION = 1;
+const THUMB_MAX_BYTES = 220 * 1024 * 1024;
+const THUMB_TTL_MS = 1000 * 60 * 60 * 24 * 21;
+const VIRTUAL_OVERSCAN_PX = 900;
+const virtualState = {
+  rows: [],
+  offsets: [],
+  totalHeight: 0,
+  gridCols: 1,
+  lastStartIdx: -1,
+  lastEndIdx: -1,
+  lastTopPad: -1,
+  lastBottomPad: -1,
+  rowNodeCache: new Map(),
+};
+let thumbDbPromise = null;
+const thumbNodeState = new WeakMap();
+
+function getThumbNodeState(el) {
+  let st = thumbNodeState.get(el);
+  if (!st) {
+    st = {
+      inFlightPromise: null,
+      abortController: null,
+      currentLevel: '',
+      lastSuccessSrc: '',
+      status: 'idle', // idle|loading|loaded|failed|stale
+      objectUrls: new Set(),
+      token: '',
+    };
+    thumbNodeState.set(el, st);
+  }
+  return st;
+}
+
+function openThumbDb() {
+  if (!('indexedDB' in window)) return Promise.resolve(null);
+  if (thumbDbPromise) return thumbDbPromise;
+  thumbDbPromise = new Promise(resolve => {
+    const req = indexedDB.open(THUMB_DB_NAME, THUMB_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(THUMB_DB_STORE)) {
+        const store = db.createObjectStore(THUMB_DB_STORE, { keyPath: 'key' });
+        store.createIndex('touchedAt', 'touchedAt', { unique: false });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  });
+  return thumbDbPromise;
+}
+
+async function idbGet(key) {
+  const db = await openThumbDb();
+  if (!db) return null;
+  return await new Promise(resolve => {
+    const tx = db.transaction(THUMB_DB_STORE, 'readonly');
+    const store = tx.objectStore(THUMB_DB_STORE);
+    const req = store.get(key);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => resolve(null);
+  });
+}
+
+async function idbPut(record) {
+  const db = await openThumbDb();
+  if (!db) return;
+  await new Promise(resolve => {
+    const tx = db.transaction(THUMB_DB_STORE, 'readwrite');
+    tx.objectStore(THUMB_DB_STORE).put(record);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+}
+
+async function idbSweep(limitBytes = THUMB_MAX_BYTES) {
+  const db = await openThumbDb();
+  if (!db) return;
+  const now = Date.now();
+  const records = await new Promise(resolve => {
+    const tx = db.transaction(THUMB_DB_STORE, 'readonly');
+    const req = tx.objectStore(THUMB_DB_STORE).getAll();
+    req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+    req.onerror = () => resolve([]);
+  });
+  const expired = records.filter(r => !r || !r.blob || (now - Number(r.createdAt || 0)) > THUMB_TTL_MS);
+  const valid = records.filter(r => r && r.blob && (now - Number(r.createdAt || 0)) <= THUMB_TTL_MS);
+  let total = valid.reduce((acc, r) => acc + (Number(r.bytes) || 0), 0);
+  valid.sort((a, b) => Number(a.touchedAt || 0) - Number(b.touchedAt || 0));
+  const toDelete = expired.map(r => r.key);
+  for (const r of valid) {
+    if (total <= limitBytes) break;
+    toDelete.push(r.key);
+    total -= Number(r.bytes) || 0;
+  }
+  if (!toDelete.length) return;
+  await new Promise(resolve => {
+    const tx = db.transaction(THUMB_DB_STORE, 'readwrite');
+    const store = tx.objectStore(THUMB_DB_STORE);
+    toDelete.forEach(k => store.delete(k));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+}
+
+function makeThumbCacheKey(file, src, level = 'u') {
+  const fid = file?.id || file?.url || 'na';
+  return `${currentIndexVersion || 'nov'}::${fid}::${level}::${src}`;
+}
+
+async function getThumbObjectUrl(file, src, level = 'u') {
+  const key = makeThumbCacheKey(file, src, level);
+  const cached = await idbGet(key);
+  if (cached?.blob) {
+    cached.touchedAt = Date.now();
+    idbPut(cached).catch(() => {});
+    return URL.createObjectURL(cached.blob);
+  }
+  const res = await fetch(src, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Thumb HTTP ${res.status}`);
+  const blob = await res.blob();
+  idbPut({
+    key,
+    blob,
+    bytes: blob.size || 0,
+    createdAt: Date.now(),
+    touchedAt: Date.now(),
+  }).catch(() => {});
+  idbSweep().catch(() => {});
+  return URL.createObjectURL(blob);
+}
+
+async function mountThumbWithSwap(el, file, src, level = 'u', blurPx = 0) {
+  const st = getThumbNodeState(el);
+  if (st.abortController) st.abortController.abort();
+  st.abortController = new AbortController();
+  const signal = st.abortController.signal;
+  const token = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  st.token = token;
+  st.status = 'loading';
+  st.currentLevel = level;
+  dbg('thumb loading', { fileId: file?.id || file?.url, level, token });
+
+  const promise = (async () => {
+    const objUrl = await getThumbObjectUrl(file, src, level);
+    if (signal.aborted) {
+      try { URL.revokeObjectURL(objUrl); } catch (_) {}
+      throw new Error('aborted');
+    }
+    if (!document.body.contains(el)) {
+      try { URL.revokeObjectURL(objUrl); } catch (_) {}
+      throw new Error('detached');
+    }
+    if (st.token !== token) {
+      try { URL.revokeObjectURL(objUrl); } catch (_) {}
+      throw new Error('stale-token');
+    }
+
+    const img = new Image();
+    img.decoding = 'async';
+    img.loading = 'eager';
+    img.src = objUrl;
+    try {
+      if (img.decode) await img.decode();
+    } catch {}
+    await new Promise((resolve, reject) => {
+      if (img.complete && img.naturalWidth > 0) return resolve();
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('img-load-failed'));
+    });
+    if (signal.aborted) {
+      try { URL.revokeObjectURL(objUrl); } catch (_) {}
+      throw new Error('aborted');
+    }
+    if (st.token !== token) {
+      try { URL.revokeObjectURL(objUrl); } catch (_) {}
+      throw new Error('stale-token');
+    }
+
+    // Commit only after successful decode/load; keep previous image until now.
+    img.dataset.objurl = objUrl;
+    img.style.cssText = `width:100%;height:100%;object-fit:cover;border-radius:inherit;${blurPx > 0 ? `filter:blur(${blurPx}px);transform:scale(1.02);` : 'filter:none;transform:none;'}transition:filter 180ms ease,transform 180ms ease,opacity 180ms ease;`;
+    const prevImgs = [...el.querySelectorAll('img[data-objurl]')];
+    el.innerHTML = '';
+    el.appendChild(img);
+    prevImgs.forEach((p) => {
+      const prevUrl = p.dataset.objurl;
+      if (prevUrl) {
+        try { URL.revokeObjectURL(prevUrl); } catch (_) {}
+        st.objectUrls.delete(prevUrl);
+      }
+    });
+    st.objectUrls.add(objUrl);
+    st.lastSuccessSrc = src;
+    const prevStatus = st.status;
+    st.status = 'loaded';
+    el.dataset.loaded = '1';
+    el.dataset.loading = '0';
+    el.dataset.failed = '0';
+    el.dataset.retryCount = '0';
+    if (prevStatus === 'loaded' && level === '512') {
+      dbg('thumb loaded -> upgraded', { fileId: file?.id || file?.url, level, token });
+    } else {
+      dbg('thumb loading -> loaded', { fileId: file?.id || file?.url, level, token });
+    }
+    return img;
+  })();
+
+  st.inFlightPromise = promise;
+  return promise;
+}
+
+function revokeObjectUrlsInNode(node) {
+  if (!node) return;
+  const st = getThumbNodeState(node);
+  if (st.abortController) st.abortController.abort();
+  st.inFlightPromise = null;
+  st.status = st.status === 'loaded' ? 'stale' : st.status;
+  st.objectUrls.forEach((u) => {
+    try { URL.revokeObjectURL(u); } catch (_) {}
+  });
+  st.objectUrls.clear();
+  dbg('thumb evicted -> revoked', { token: st.token, level: st.currentLevel });
+  node.querySelectorAll('img[data-objurl]').forEach(img => {
+    const u = img.dataset.objurl;
+    if (!u) return;
+    try { URL.revokeObjectURL(u); } catch (_) {}
+    img.removeAttribute('data-objurl');
+  });
+}
+
+function invalidateVirtualRowCache() {
+  for (const node of virtualState.rowNodeCache.values()) revokeObjectUrlsInNode(node);
+  virtualState.rowNodeCache.clear();
+}
+
+function makeThumbNode(file, isList = false) {
+  const thumb = document.createElement('div');
+  if (isList) thumb.className = 'list-thumb';
+  thumb.style.cssText = isList ? '' : 'width:100%;height:100%;';
+  thumb.dataset.src = file.url;
+  thumb.dataset.type = file.type;
+  if (file.thumbUrl) thumb.dataset.thumb = file.thumbUrl;
+  thumb.dataset.retryCount = '0';
+  thumb.dataset.loading = '0';
+  thumb.innerHTML = placeholder(file.type);
+  const st = getThumbNodeState(thumb);
+  st.status = 'idle';
+  st.lastSuccessSrc = '';
+  st.currentLevel = '';
+  hydrateThumbNode(thumb, file);
+  return thumb;
+}
+
+function hydrateThumbNode(el, file) {
+  if (!file) return;
+  const st = getThumbNodeState(el);
+  if (st.status === 'loading' && st.inFlightPromise) return;
+  const hydrationToken = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  el.dataset.hydrationToken = hydrationToken;
+  el.dataset.loading = '1';
+  const maxRetries = 6;
+  const retryCount = Number(el.dataset.retryCount || '0') || 0;
+    const retryLater = () => {
+    const next = retryCount + 1;
+    el.dataset.retryCount = String(next);
+    el.dataset.loading = '0';
+    if (next > maxRetries) {
+      if (!document.body.contains(el)) return;
+      if (el.dataset.hydrationToken !== hydrationToken) return;
+      el.dataset.failed = '1';
+      el.dataset.retryCount = '0';
+      el.dataset.loading = '0';
+      if (st.status !== 'loaded') {
+        el.innerHTML = `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--card);color:var(--muted);font-size:10px;">Generando preview…</div>`;
+      }
+      st.status = st.lastSuccessSrc ? 'stale' : 'failed';
+      dbg('thumb loading -> failed', { fileId: file?.id || file?.url, level: st.currentLevel, token: st.token });
+      setTimeout(() => {
+        if (!document.body.contains(el)) return;
+        hydrateThumbNode(el, file);
+      }, 2200);
+      return;
+    }
+    const delay = Math.min(2000, 220 * (2 ** (next - 1)));
+    setTimeout(() => {
+      if (!document.body.contains(el)) return;
+      if (el.dataset.hydrationToken !== hydrationToken) return;
+      hydrateThumbNode(el, file);
+    }, delay);
+  };
+
+  if (file.type === 'image') {
+    const t128 = (typeof file.thumb128Url === 'string' && file.thumb128Url.trim())
+      ? file.thumb128Url.trim()
+      : ((typeof file.thumbUrl === 'string' && file.thumbUrl.trim()) ? file.thumbUrl.trim() : file.url);
+    const t512 = (typeof file.thumb512Url === 'string' && file.thumb512Url.trim())
+      ? file.thumb512Url.trim()
+      : ((typeof file.thumbUrl === 'string' && file.thumbUrl.trim()) ? file.thumbUrl.trim() : t128);
+
+    mountThumbWithSwap(el, file, t128, '128', 6).then(() => {
+      if (!document.body.contains(el)) return;
+      if (el.dataset.hydrationToken !== hydrationToken) return;
+      el.dataset.failed = '0';
+      el.dataset.loading = '0';
+      el.dataset.retryCount = '0';
+      el.dataset.loaded = '1';
+      return mountThumbWithSwap(el, file, t512, '512', 0).then(() => {
+        if (!document.body.contains(el)) return;
+        if (el.dataset.hydrationToken !== hydrationToken) return;
+        el.dataset.failed = '0';
+        el.dataset.loading = '0';
+        el.dataset.retryCount = '0';
+        el.dataset.loaded = '1';
+      }).catch(() => {});
+    }).catch(() => {
+      if (!document.body.contains(el)) return;
+      if (el.dataset.hydrationToken !== hydrationToken) return;
+      retryLater();
+    });
+    return;
+  }
+  if (file.type === 'video') {
+    requestVideoThumbPreview(el, file.url, 0, true);
+    el.dataset.loading = '0';
+    el.dataset.retryCount = '0';
+  }
+}
+
+function rehydrateFailedThumbs(container) {
+  if (!container) return;
+  const pending = container.querySelectorAll('[data-src][data-type]');
+  pending.forEach(el => {
+    const st = getThumbNodeState(el);
+    if (st.status === 'loading' && st.inFlightPromise) return;
+    if (st.status === 'loaded') return;
+    if (st.status !== 'failed' && st.status !== 'stale' && el.dataset.loaded === '1') return;
+    const src = el.dataset.src;
+    if (!src) return;
+    const file = filteredFiles.find(f => f?.url === src);
+    if (!file) return;
+    // Non-destructive rehydrate: keep previous visual when available.
+    if (st.status !== 'loaded' && !el.querySelector('img[data-objurl]')) {
+      el.innerHTML = placeholder(file.type);
+    }
+    el.dataset.loading = '0';
+    el.dataset.failed = st.status === 'failed' ? '1' : '0';
+    el.dataset.retryCount = el.dataset.retryCount || '0';
+    hydrateThumbNode(el, file);
+  });
+}
+
+function getGridColumns() {
+  const app = document.getElementById('app');
+  const px = SIZE_PX[sizeIdx];
+  const width = Math.max(320, app.clientWidth || 320);
+  return Math.max(1, Math.floor((width + 6) / (px + 6)));
+}
+
+function rebuildVirtualRows() {
+  const rows = [];
+  const gridCols = layoutMode === 'grid' ? getGridColumns() : 1;
+  const app = document.getElementById('app');
+  const appWidth = Math.max(320, app?.clientWidth || 320);
+  const gridGap = 6;
+  const cellWidth = layoutMode === 'grid'
+    ? Math.max(40, Math.floor((appWidth - (gridGap * (gridCols - 1))) / gridCols))
+    : 0;
+  const gridRowHeight = layoutMode === 'grid' ? (cellWidth + gridGap) : 0;
+  for (const key of groupKeys) {
+    const files = groupMap[key] || [];
+    const displayLabel = currentGroup === 'date' ? monthGroupLabel(key) : key;
+    rows.push({ kind: 'header', label: displayLabel, count: files.length, groupKey: key, height: 30 });
+    if (layoutMode === 'list') {
+      for (const f of files) rows.push({ kind: 'list-item', files: [f], height: 58 });
+    } else {
+      for (let i = 0; i < files.length; i += gridCols) {
+        rows.push({ kind: 'grid-row', files: files.slice(i, i + gridCols), height: gridRowHeight });
+      }
+    }
+  }
+  virtualState.rows = rows;
+  virtualState.gridCols = gridCols;
+  virtualState.offsets = new Array(rows.length);
+  let y = 0;
+  for (let i = 0; i < rows.length; i += 1) {
+    virtualState.offsets[i] = y;
+    y += rows[i].height;
+  }
+  virtualState.totalHeight = y;
+  virtualState.lastStartIdx = -1;
+  virtualState.lastEndIdx = -1;
+  virtualState.lastTopPad = -1;
+  virtualState.lastBottomPad = -1;
+  for (const node of virtualState.rowNodeCache.values()) revokeObjectUrlsInNode(node);
+  virtualState.rowNodeCache.clear();
+}
+
+function findRowIndexAt(offsetPx) {
+  const offsets = virtualState.offsets;
+  let lo = 0;
+  let hi = offsets.length - 1;
+  let ans = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (offsets[mid] <= offsetPx) {
+      ans = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return ans;
+}
+
+function renderVirtualViewport() {
+  const app = document.getElementById('app');
+  if (!app) return;
+  if (!virtualState.rows.length) {
+    app.innerHTML = `<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg><p>Sin resultados</p></div>`;
+    return;
+  }
+  const rect = app.getBoundingClientRect();
+  const appTop = rect.top + window.scrollY;
+  const viewTop = Math.max(0, window.scrollY - appTop - VIRTUAL_OVERSCAN_PX);
+  const viewBottom = viewTop + window.innerHeight + (VIRTUAL_OVERSCAN_PX * 2);
+  const startIdx = findRowIndexAt(viewTop);
+  const endIdx = Math.min(virtualState.rows.length - 1, findRowIndexAt(viewBottom));
+  const topPad = virtualState.offsets[startIdx] || 0;
+  const endOffset = (virtualState.offsets[endIdx] || 0) + virtualState.rows[endIdx].height;
+  const bottomPad = Math.max(0, virtualState.totalHeight - endOffset);
+
+  if (
+    startIdx === virtualState.lastStartIdx &&
+    endIdx === virtualState.lastEndIdx &&
+    topPad === virtualState.lastTopPad &&
+    bottomPad === virtualState.lastBottomPad
+  ) {
+    return;
+  }
+
+  virtualState.lastStartIdx = startIdx;
+  virtualState.lastEndIdx = endIdx;
+  virtualState.lastTopPad = topPad;
+  virtualState.lastBottomPad = bottomPad;
+  while (app.firstChild) app.removeChild(app.firstChild);
+  const topSpacer = document.createElement('div');
+  topSpacer.style.height = `${topPad}px`;
+  app.appendChild(topSpacer);
+
+  const visibleSet = new Set();
+  const gridGap = 6;
+  const appWidthNow = Math.max(320, app.clientWidth || 320);
+  const cellWidthNow = Math.max(40, Math.floor((appWidthNow - (gridGap * (virtualState.gridCols - 1))) / Math.max(1, virtualState.gridCols)));
+  const createRowNode = (row, rowIdx) => {
+    if (row.kind === 'header') {
+      const h = document.createElement('div');
+      h.className = 'section-head';
+      h.style.marginBottom = '10px';
+      h.style.marginTop = '8px';
+      h.innerHTML = `<span>${row.label}</span><span style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-left:6px;">${row.count}</span>`;
+      return h;
+    }
+    if (row.kind === 'grid-row') {
+      const g = document.createElement('div');
+      g.style.cssText = `display:grid;grid-template-columns:repeat(${virtualState.gridCols}, minmax(0,1fr));gap:6px;margin-bottom:6px;`;
+      for (const f of row.files) {
+        const card = document.createElement('div');
+        card.className = 'media-card';
+        if (selectedUrls.has(f.url)) {
+          card.classList.add('selected');
+          const mark = document.createElement('div');
+          mark.className = 'sel-indicator';
+          mark.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="width:12px;height:12px"><polyline points="20 6 9 17 4 12"/></svg>';
+          card.appendChild(mark);
+        }
+        card.style.aspectRatio = '1';
+        card.setAttribute('draggable', 'true');
+        const thumb = makeThumbNode(f, false);
+        card.appendChild(thumb);
+        const ov = document.createElement('div');
+        ov.className = 'card-overlay';
+        ov.innerHTML = `<span class="card-name">${f.name}</span>`;
+        card.appendChild(ov);
+        if (f.type !== 'image') {
+          const badge = document.createElement('div');
+          badge.className = 'type-badge';
+          badge.innerHTML = f.type === 'video'
+            ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>Video`
+            : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Audio`;
+          card.appendChild(badge);
+        }
+        const gi = filteredFiles.findIndex(x => x.url === f.url);
+        card.onclick = (e) => {
+          if (handleItemSelection(f, e)) return;
+          openViewer(gi);
+        };
+        card.addEventListener('dragstart', () => { dragSrc = f.url; });
+        card.addEventListener('dragover', e => { e.preventDefault(); card.classList.add('drag-over'); });
+        card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+        card.addEventListener('drop', e => { e.preventDefault(); card.classList.remove('drag-over'); reorder(dragSrc, f.url); });
+        g.appendChild(card);
+      }
+      if (row.files.length < virtualState.gridCols) {
+        for (let iBlank = row.files.length; iBlank < virtualState.gridCols; iBlank += 1) {
+          const blank = document.createElement('div');
+          blank.style.cssText = `min-height:${cellWidthNow}px;`;
+          g.appendChild(blank);
+        }
+      }
+      return g;
+    }
+    if (row.kind === 'list-item') {
+      const f = row.files[0];
+      const gi = filteredFiles.findIndex(x => x.url === f.url);
+      const el = document.createElement('div');
+      el.className = 'list-row';
+      if (selectedUrls.has(f.url)) {
+        el.classList.add('selected');
+        const mark = document.createElement('div');
+        mark.className = 'sel-indicator';
+        mark.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="width:11px;height:11px"><polyline points="20 6 9 17 4 12"/></svg>';
+        el.appendChild(mark);
+      }
+      el.style.marginBottom = '4px';
+      const thumb = makeThumbNode(f, true);
+      const body = document.createElement('div');
+      body.style.cssText = 'flex:1;min-width:0;';
+      body.innerHTML = `<div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.name}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">${prettyDate(f.date)}</div>`;
+      const dl = document.createElement('a');
+      dl.href = f.url;
+      dl.download = f.name;
+      dl.onclick = ev => ev.stopPropagation();
+      dl.style.cssText = 'background:var(--panel);border:1px solid var(--border);color:var(--muted-l);padding:5px 9px;border-radius:7px;text-decoration:none;font-size:12px;transition:background 0.15s;display:flex;align-items:center;gap:4px;';
+      dl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+      el.appendChild(thumb);
+      el.appendChild(body);
+      el.appendChild(dl);
+      el.onclick = (e) => {
+        if (handleItemSelection(f, e)) return;
+        openViewer(gi);
+      };
+      return el;
+    }
+    return document.createElement('div');
+  };
+
+  for (let i = startIdx; i <= endIdx; i += 1) {
+    visibleSet.add(i);
+    const row = virtualState.rows[i];
+    if (!row) continue;
+    let rowNode = virtualState.rowNodeCache.get(i);
+    if (!rowNode) {
+      rowNode = createRowNode(row, i);
+      virtualState.rowNodeCache.set(i, rowNode);
+    } else {
+      rehydrateFailedThumbs(rowNode);
+    }
+    app.appendChild(rowNode);
+  }
+
+  const bottomSpacer = document.createElement('div');
+  bottomSpacer.style.height = `${bottomPad}px`;
+  app.appendChild(bottomSpacer);
+
+  const evictKeys = [];
+  for (const k of virtualState.rowNodeCache.keys()) {
+    if (visibleSet.has(k)) continue;
+    if (k >= (startIdx - 60) && k <= (endIdx + 60)) continue;
+    evictKeys.push(k);
+  }
+  for (const k of evictKeys) {
+    const node = virtualState.rowNodeCache.get(k);
+    revokeObjectUrlsInNode(node);
+    virtualState.rowNodeCache.delete(k);
+  }
+}
+
+let virtualRenderScheduled = false;
+let lastVirtualViewportWidth = 0;
+let lastScrollAt = 0;
+let resizeDebounceTimer = null;
+const WIDTH_REBUILD_THRESHOLD_PX = 8;
+const MOBILE_WIDTH_REBUILD_THRESHOLD_PX = 64;
+const SCROLL_GUARD_MS = 280;
+let suppressScrollRender = false;
+let lastVirtualIsMobile = null;
+let lastVirtualOrientation = '';
+let lastVirtualGridCols = 1;
+
+function getStableViewportWidth() {
+  return Math.round(document.documentElement?.clientWidth || window.innerWidth || 0);
+}
+
+function getViewportOrientation() {
+  return window.matchMedia && window.matchMedia('(orientation: portrait)').matches
+    ? 'portrait'
+    : 'landscape';
+}
+
+function hasCoarsePointer() {
+  return Boolean(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+}
+
+function captureVirtualAnchor() {
+  const app = document.getElementById('app');
+  if (!app || !virtualState.rows.length || !virtualState.offsets.length) return null;
+  const rect = app.getBoundingClientRect();
+  const appTop = rect.top + window.scrollY;
+  const viewTop = Math.max(0, window.scrollY - appTop);
+  const idx = Math.min(virtualState.rows.length - 1, findRowIndexAt(viewTop));
+  const rowTop = virtualState.offsets[idx] || 0;
+  return { idx, delta: viewTop - rowTop };
+}
+
+function restoreVirtualAnchor(anchor) {
+  // Never force scroll re-anchor on touch-first devices.
+  if (hasCoarsePointer()) return;
+  if (!anchor || !virtualState.rows.length) return;
+  const app = document.getElementById('app');
+  if (!app) return;
+  const idx = Math.max(0, Math.min(anchor.idx, virtualState.rows.length - 1));
+  const rowTop = virtualState.offsets[idx] || 0;
+  const rect = app.getBoundingClientRect();
+  const appTop = rect.top + window.scrollY;
+  const targetY = Math.max(0, Math.round(appTop + rowTop + (anchor.delta || 0)));
+  suppressScrollRender = true;
+  window.scrollTo(0, targetY);
+  setTimeout(() => { suppressScrollRender = false; }, 80);
+}
+function scheduleVirtualRender() {
+  if (virtualRenderScheduled) return;
+  virtualRenderScheduled = true;
+  requestAnimationFrame(() => {
+    virtualRenderScheduled = false;
+    renderVirtualViewport();
+  });
+}
+
+window.addEventListener('scroll', () => {
+  if (suppressScrollRender) return;
+  lastScrollAt = Date.now();
+  scheduleVirtualRender();
+}, { passive: true });
+window.addEventListener('resize', () => {
+  if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
+  resizeDebounceTimer = setTimeout(() => {
+    const touchDevice = hasCoarsePointer();
+    const isMobile = window.innerWidth <= 768 || touchDevice;
+    const orientation = getViewportOrientation();
+    const currentWidth = getStableViewportWidth();
+    if (!currentWidth) return;
+
+    const widthDelta = Math.abs(currentWidth - (lastVirtualViewportWidth || currentWidth));
+    const crossedBreakpoint = lastVirtualIsMobile !== null && lastVirtualIsMobile !== isMobile;
+    const orientationChanged = Boolean(lastVirtualOrientation && lastVirtualOrientation !== orientation);
+    const currentGridCols = layoutMode === 'grid' ? getGridColumns() : 1;
+    const colsChanged = currentGridCols !== (lastVirtualGridCols || currentGridCols);
+
+    if (isMobile) {
+      // Mobile browser chrome changes can emit resize many times while scrolling.
+      // Prioritize stability and rebuild only on meaningful layout changes.
+      if (Date.now() - lastScrollAt < SCROLL_GUARD_MS) return;
+      if (!crossedBreakpoint && !orientationChanged && !colsChanged) {
+        if (widthDelta < MOBILE_WIDTH_REBUILD_THRESHOLD_PX) return;
+      }
+      lastVirtualViewportWidth = currentWidth;
+      lastVirtualIsMobile = isMobile;
+      lastVirtualOrientation = orientation;
+      lastVirtualGridCols = currentGridCols;
+      rebuildVirtualRows();
+      scheduleVirtualRender();
+      return;
+    }
+
+    if (lastVirtualViewportWidth && widthDelta < WIDTH_REBUILD_THRESHOLD_PX && !crossedBreakpoint && !orientationChanged && !colsChanged) {
+      return;
+    }
+    const anchor = touchDevice ? null : captureVirtualAnchor();
+    lastVirtualViewportWidth = currentWidth;
+    lastVirtualIsMobile = isMobile;
+    lastVirtualOrientation = orientation;
+    lastVirtualGridCols = currentGridCols;
+    rebuildVirtualRows();
+    restoreVirtualAnchor(anchor);
+    scheduleVirtualRender();
+  }, 180);
+});
+
+function renderChunk() {
+  rebuildVirtualRows();
+  renderVirtualViewport();
+}
+
+function resetInfiniteObserver() {
+  if (sentinelObs) sentinelObs.disconnect();
+  sentinelObs = null;
+}
+
+function resubscribeThumbObservers() {}
+
+function suspendThumbLoading(on) {
+  thumbLoadingSuspended = on;
+  if (!on) scheduleVirtualRender();
+}
+
+function applyFilters() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const isLivePhoto = f => Boolean(f?.type === 'video' && f?.livePhoto?.enabled);
+  const typeMatch = (f) => {
+    if (currentType === 'all') return true;
+    if (currentType === 'live') return isLivePhoto(f);
+    if (currentType === 'video') return f.type === 'video' && !isLivePhoto(f);
+    return f.type === currentType;
+  };
+  filteredFiles = allFiles.filter(f =>
+    typeMatch(f) &&
+    (currentEntry === 'all' || f.entryId === currentEntry) &&
+    (!favoritesOnly || isFavorite(f.url)) &&
+    (!q || f.name.toLowerCase().includes(q) || f.url.toLowerCase().includes(q))
+  );
+  if (currentSort === 'invert') filteredFiles.reverse();
+  else {
+    filteredFiles.sort((a, b) => {
+      switch (currentSort) {
+        case 'date-desc': return dateRank(b.date) - dateRank(a.date);
+        case 'date-asc': return dateRank(a.date) - dateRank(b.date);
+        case 'name-asc': return a.name.localeCompare(b.name);
+        case 'name-desc': return b.name.localeCompare(a.name);
+        case 'heavy-desc': return b.size - a.size;
+        case 'heavy-asc': return a.size - b.size;
+        default: return 0;
+      }
+    });
+  }
+  groupMap = {};
+  for (const f of filteredFiles) {
+    const typeLabel = isLivePhoto(f)
+      ? 'Live Photos'
+      : ({ image: 'Fotos', video: 'Videos', audio: 'Audio' }[f.type] || 'Otros');
+    const key = currentGroup === 'date' ? monthGroupKey(f.date)
+      : currentGroup === 'type' ? typeLabel
+      : 'Todos los archivos';
+    if (!groupMap[key]) groupMap[key] = [];
+    groupMap[key].push(f);
+  }
+  groupKeys = Object.keys(groupMap);
+  if (currentGroup === 'date') {
+    groupKeys.sort((a, b) => currentSort === 'date-asc'
+      ? monthGroupRank(a) - monthGroupRank(b)
+      : monthGroupRank(b) - monthGroupRank(a));
+  }
+  updateSelectionUI();
+  updateStats();
+  rebuildVirtualRows();
+  scheduleVirtualRender();
+}
 
 // ── INIT ──────────────────────────────────────────────────────
 (async () => {
+  syncStickyBars();
+  enforceMobileGridSize();
+  lastVirtualViewportWidth = getStableViewportWidth();
+  lastVirtualIsMobile = window.innerWidth <= 768;
+  lastVirtualOrientation = getViewportOrientation();
+  lastVirtualGridCols = layoutMode === 'grid' ? getGridColumns() : 1;
   while (true) {
     try {
       const idx = await loadIndex();

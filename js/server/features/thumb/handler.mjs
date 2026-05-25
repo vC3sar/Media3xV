@@ -17,6 +17,7 @@ async function runCommand(command, args) {
 
 function createThumbHandler(ctx) {
   const { fs, path, crypto, createReadStream, mediaRoots, thumbCacheDir, log } = ctx;
+  const THUMB_SIZE = 256;
 
   function resolveSrc(src) {
     if (src.startsWith("/media/")) {
@@ -37,7 +38,17 @@ function createThumbHandler(ctx) {
     return { input: src };
   }
 
-  async function handle(req, res, url) {
+  async function serveCachedThumb(res, outFile, contentType) {
+    const st = await fs.stat(outFile);
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "Content-Length": st.size,
+    });
+    createReadStream(outFile).pipe(res);
+  }
+
+  async function handleVideo(req, res, url) {
     const src = String(url.searchParams.get("src") || "").trim();
     const v = String(url.searchParams.get("v") || "0").trim();
     if (!src) {
@@ -53,12 +64,7 @@ function createThumbHandler(ctx) {
       try {
         const st = await fs.stat(outFile);
         if (st.isFile() && st.size > 0) {
-          res.writeHead(200, {
-            "Content-Type": "image/jpeg",
-            "Cache-Control": "public, max-age=31536000, immutable",
-            "Content-Length": st.size,
-          });
-          createReadStream(outFile).pipe(res);
+          await serveCachedThumb(res, outFile, "image/jpeg");
           return true;
         }
       } catch {}
@@ -89,13 +95,7 @@ function createThumbHandler(ctx) {
         outFile,
       ]);
 
-      const st = await fs.stat(outFile);
-      res.writeHead(200, {
-        "Content-Type": "image/jpeg",
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "Content-Length": st.size,
-      });
-      createReadStream(outFile).pipe(res);
+      await serveCachedThumb(res, outFile, "image/jpeg");
     } catch (err) {
       log(`thumb generation failed src=${src} err=${err.message}`);
       res.writeHead(404);
@@ -104,7 +104,66 @@ function createThumbHandler(ctx) {
     return true;
   }
 
-  return { handle };
+  async function handleImage(req, res, url) {
+    const src = String(url.searchParams.get("src") || "").trim();
+    const v = String(url.searchParams.get("v") || "0").trim();
+    const sizeRaw = Number(url.searchParams.get("size") || THUMB_SIZE);
+    const size = [128, 256, 512].includes(sizeRaw) ? sizeRaw : THUMB_SIZE;
+    if (!src) {
+      res.writeHead(400);
+      res.end("Missing src");
+      return true;
+    }
+    try {
+      const hash = crypto.createHash("sha1").update(`img|${src}|${v}|${size}`).digest("hex");
+      const outFile = path.resolve(thumbCacheDir, `${hash}.webp`);
+      try {
+        const st = await fs.stat(outFile);
+        if (st.isFile() && st.size > 0) {
+          await serveCachedThumb(res, outFile, "image/webp");
+          return true;
+        }
+      } catch {}
+
+      const resolved = resolveSrc(src);
+      if (resolved.errorCode) {
+        res.writeHead(resolved.errorCode);
+        res.end(resolved.errorMessage);
+        return true;
+      }
+
+      await runCommand("ffmpeg", [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        resolved.input,
+        "-frames:v",
+        "1",
+        "-filter_complex",
+        `[0:v]scale=${size}:${size}:force_original_aspect_ratio=decrease:flags=lanczos[v]`,
+        "-map",
+        "[v]",
+        "-q:v",
+        "42",
+        "-compression_level",
+        "6",
+        "-preset",
+        "picture",
+        "-f",
+        "webp",
+        outFile,
+      ]);
+      await serveCachedThumb(res, outFile, "image/webp");
+    } catch (err) {
+      log(`image thumb generation failed src=${src} err=${err.message}`);
+      res.writeHead(404);
+      res.end("Thumbnail unavailable");
+    }
+    return true;
+  }
+
+  return { handleVideo, handleImage };
 }
 
 export { createThumbHandler };
