@@ -3,6 +3,7 @@ import {
   CONFIG_URL,
   CACHE_CLEANUP_URL,
   CACHE_STATS_URL,
+  UPLOAD_URL,
   LIVE_PREPARE_URL,
   LIVE_STATUS_URL,
   FAVORITES_KEY,
@@ -559,6 +560,67 @@ function closeConfigModal() {
   document.getElementById('cfgModal').style.display = 'none';
 }
 
+function formatDateGroupLabel(groupKey) {
+  const k = String(groupKey || '');
+  if (k === '0000-sin-fecha') return 'Sin fecha';
+  const full = k.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (full) {
+    return `${monthGroupLabel(`${full[1]}-${full[2]}`)} · ${full[3]}`;
+  }
+  const yearOnly = k.match(/^(\d{4})-XX-XX$/);
+  if (yearOnly) return yearOnly[1];
+  return monthGroupLabel(k);
+}
+
+function openUploadPicker() {
+  const input = document.getElementById('uploadInput');
+  if (!input) return;
+  input.value = '';
+  input.click();
+}
+
+async function uploadSelectedFiles(evt) {
+  const input = evt?.target;
+  const files = Array.from(input?.files || []);
+  if (!files.length) return;
+  const btn = document.getElementById('uploadBtn');
+  const prevLabel = btn?.querySelector('span')?.textContent || 'Subir';
+  if (btn) {
+    btn.disabled = true;
+    const label = btn.querySelector('span');
+    if (label) label.textContent = 'Subiendo...';
+  }
+  try {
+    const form = new FormData();
+    for (const f of files) form.append('files', f, f.name);
+    const res = await fetch(UPLOAD_URL, {
+      method: 'POST',
+      body: form
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+    toast(`Subidos ${payload.uploaded || files.length}. Reindexando...`, 2800);
+    try {
+      const idx = await loadIndex();
+      if (idx.version !== currentIndexVersion) {
+        currentIndexVersion = idx.version;
+        applyNewFileSet(idx.files, 'poll');
+      }
+    } catch (_) {
+      // polling will refresh when index is ready
+    }
+  } catch (err) {
+    toast(`Error al subir: ${err.message}`, 4200);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      const label = btn.querySelector('span');
+      if (label) label.textContent = prevLabel;
+    }
+    if (input) input.value = '';
+  }
+}
+
 async function saveConfigModalData() {
   const sourceMode = document.getElementById('cfgSourceMode').value;
   const mediaRoots = document.getElementById('cfgMediaRoots').value
@@ -992,12 +1054,16 @@ function startIndexPolling() {
 // ── STATS ────────────────────────────────────────────────────
 function updateStats() {
   const c = {image:0,video:0,live:0,audio:0};
+  const recentCutoff = Date.now() - (7 * 24 * 60 * 60 * 1000);
+  let recent = 0;
   allFiles.forEach(f => {
+    if (Number.isFinite(f?.mtimeMs) && Number(f.mtimeMs) >= recentCutoff) recent += 1;
     if (f.type === 'video' && f.livePhoto?.enabled) c.live += 1;
     else if (f.type === 'video') c.video += 1;
     else c[f.type] = (c[f.type] || 0) + 1;
   });
   document.getElementById('cnt-all').textContent   = allFiles.length;
+  document.getElementById('cnt-recent').textContent = recent;
   document.getElementById('cnt-image').textContent = c.image;
   document.getElementById('cnt-video').textContent = c.video;
   document.getElementById('cnt-live').textContent = c.live;
@@ -1013,6 +1079,22 @@ function updateStats() {
     else fc[f.type] = (fc[f.type] || 0) + 1;
   });
   sr.innerHTML = '';
+  const isMobileStats = window.innerWidth <= 768;
+  if (isMobileStats) {
+    const compact = [
+      { icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>', val: String(fc.image) },
+      { icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>', val: String(fc.video) },
+      { icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>', val: String(fc.live) },
+      { icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>', val: String(fc.audio) },
+    ];
+    compact.forEach(ch => {
+      const d = document.createElement('div');
+      d.className = 'stat-chip stat-chip--compact';
+      d.innerHTML = ch.icon + `<span>${ch.val}</span>`;
+      sr.appendChild(d);
+    });
+    return;
+  }
   const chips = [
     { icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>', val: fc.image+' fotos' },
     { icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>', val: fc.video+' videos' },
@@ -1046,7 +1128,7 @@ function buildGroup(label, files) {
   sec.style.marginBottom = '28px';
   const h = document.createElement('div');
   h.className = 'section-head';
-  const displayLabel = currentGroup === 'date' ? monthGroupLabel(label) : label;
+  const displayLabel = currentGroup === 'date' ? formatDateGroupLabel(label) : label;
   h.innerHTML = `<span>${displayLabel}</span><span style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-left:6px;">${files.length}</span>`;
   sec.appendChild(h);
   sec.appendChild(layoutMode === 'list' ? buildList(files) : buildGrid(files));
@@ -1346,7 +1428,7 @@ document.addEventListener('click', e => {
 function setTypeFilter(type, el) {
   currentType = type;
   document.querySelectorAll('.nav-item').forEach(n => {
-    if (['all','image','video','live','audio'].some(t => n.onclick?.toString().includes(`'${t}'`))) n.classList.remove('active');
+    if (['all','recent','image','video','live','audio'].some(t => n.onclick?.toString().includes(`'${t}'`))) n.classList.remove('active');
   });
   el.classList.add('active');
   applyFilters();
@@ -1423,6 +1505,7 @@ function renderViewer() {
   const vid = document.getElementById('viewerVideo');
   const aud = document.getElementById('viewerAudio');
   img.style.display = 'none'; vid.style.display = 'none'; aud.style.display = 'none';
+  img.style.visibility = 'hidden';
   stopLiveStatusPolling();
   setLiveHint('');
   setViewerVideoFallback(null, false);
@@ -1440,8 +1523,35 @@ function renderViewer() {
     img.style.maxHeight = '82vh';
     img.style.objectFit = 'contain';
     img.removeAttribute('src');
+    img.dataset.viewerQuality = 'pending';
+    img.dataset.viewerTarget = f.url;
     const t512 = f.thumb512Url || f.thumbUrl || '';
     const preferOriginalFirst = useStaticViewportOnIosMobile();
+    const promoteOriginal = (attempt = 0) => {
+      const src = attempt === 0
+        ? f.url
+        : `${f.url}${f.url.includes('?') ? '&' : '?'}_vr=${Date.now()}_${attempt}`;
+      const retries = attempt === 0 ? 2 : 1;
+      return window.MediaLoader.loadImageWithRetry(src, { retries, retryDelayMs: 220 }).then(loaded => {
+        if (filteredFiles[currentViewerIdx]?.url !== f.url) return false;
+        img.style.opacity = '1';
+        img.src = loaded.src;
+        img.style.visibility = 'visible';
+        img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
+        img.dataset.viewerQuality = 'original';
+        document.getElementById('viewerZoomLbl').textContent = Math.round(vZoom*100)+'%';
+        endViewerPriorityLoad(loadToken, true);
+        return true;
+      }).catch(() => {
+        if (filteredFiles[currentViewerIdx]?.url !== f.url) return false;
+        if (attempt >= 2) {
+          endViewerPriorityLoad(loadToken, true);
+          if (img.dataset.viewerQuality !== 'low') toast('No se pudo cargar la imagen');
+          return false;
+        }
+        return promoteOriginal(attempt + 1);
+      });
+    };
     if (preferOriginalFirst) {
       // iPhone: show a good preview quickly, then upgrade to original.
       if (t512) {
@@ -1449,44 +1559,27 @@ function renderViewer() {
           if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
           img.style.opacity = '0.92';
           img.src = loaded.src;
+          img.style.visibility = 'visible';
           img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
+          img.dataset.viewerQuality = 'low';
           document.getElementById('viewerZoomLbl').textContent = Math.round(vZoom*100)+'%';
         }).catch(() => {});
       }
-      window.MediaLoader.loadImageWithRetry(f.url, { retries: 3, retryDelayMs: 220 }).then(loaded => {
-        if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
-        img.style.opacity = '1';
-        img.src = loaded.src;
-        img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
-        document.getElementById('viewerZoomLbl').textContent = Math.round(vZoom*100)+'%';
-        endViewerPriorityLoad(loadToken, true);
-      }).catch(() => {
-        if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
-        endViewerPriorityLoad(loadToken, true);
-        if (!t512) toast('No se pudo cargar la imagen');
-      });
+      promoteOriginal();
     } else {
       window.MediaLoader.loadImageWithRetry(t512 || f.url, { retries: 1, retryDelayMs: 120 }).then(loaded => {
         if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
         img.style.opacity = '0.85';
         img.src = loaded.src;
+        img.style.visibility = 'visible';
         img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
+        img.dataset.viewerQuality = 'low';
         document.getElementById('viewerZoomLbl').textContent = Math.round(vZoom*100)+'%';
       }).catch(() => {});
-      window.MediaLoader.loadImageWithRetry(f.url, { retries: 2, retryDelayMs: 200 }).then(loaded => {
-        if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
-        img.style.opacity = '1';
-        img.src = loaded.src;
-        img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
-        document.getElementById('viewerZoomLbl').textContent = Math.round(vZoom*100)+'%';
-        endViewerPriorityLoad(loadToken, true);
-      }).catch(() => {
-        if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
-        endViewerPriorityLoad(loadToken, true);
-        toast('No se pudo cargar la imagen');
-      });
+      promoteOriginal();
     }
   } else if (f.type === 'video') {
+    img.style.visibility = 'visible';
     endViewerPriorityLoad(viewerPriorityToken, true);
     viewer.classList.add('video-mode');
     viewerVideoPerf = { openAt: nowMs(), lastPlayingAt: 0 };
@@ -1510,6 +1603,7 @@ function renderViewer() {
       startLivePrepareAndPoll(f, vid, false).catch(() => {});
     }
   } else {
+    img.style.visibility = 'hidden';
     endViewerPriorityLoad(viewerPriorityToken, true);
     viewer.classList.remove('video-mode');
     aud.style.display = 'flex';
@@ -2022,7 +2116,7 @@ function rebuildVirtualRows() {
   const gridRowHeight = layoutMode === 'grid' ? (cellWidth + gridGap) : 0;
   for (const key of groupKeys) {
     const files = groupMap[key] || [];
-    const displayLabel = currentGroup === 'date' ? monthGroupLabel(key) : key;
+    const displayLabel = currentGroup === 'date' ? formatDateGroupLabel(key) : key;
     rows.push({ kind: 'header', label: displayLabel, count: files.length, groupKey: key, height: 30 });
     if (layoutMode === 'list') {
       for (const f of files) rows.push({ kind: 'list-item', files: [f], height: 58 });
@@ -2399,6 +2493,7 @@ Object.assign(window, {
   closeConfigModal,
   loadConfigModalData,
   saveConfigModalData,
+  openUploadPicker,
   cleanupCacheTargets,
   loadCacheStats,
   toggleViewerFavorite,
@@ -2409,6 +2504,8 @@ Object.assign(window, {
 
 // ── INIT ──────────────────────────────────────────────────────
 (async () => {
+  const uploadInput = document.getElementById('uploadInput');
+  if (uploadInput) uploadInput.addEventListener('change', uploadSelectedFiles);
   syncStickyBars();
   enforceMobileGridSize();
   lastVirtualViewportWidth = getStableViewportWidth();

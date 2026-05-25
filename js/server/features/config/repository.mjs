@@ -10,7 +10,9 @@ const defaults = {
   autoindexRootUrls: [],
   mediaIndexFile: "./media-index.json",
   watchDebounceMs: 1200,
+  filesystemRefreshMs: 15000,
   autoindexRefreshMs: 20000,
+  fastIndexMode: false,
   debug: false,
 };
 

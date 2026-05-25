@@ -15,6 +15,7 @@ import { buildIndexPayloadFactory } from "./js/server/features/indexing/builders
 import { createCacheService } from "./js/server/features/cache/service.mjs";
 import { createThumbHandler } from "./js/server/features/thumb/handler.mjs";
 import { createLiveService } from "./js/server/features/live/service.mjs";
+import { detectType, toPosix } from "./js/server/shared/media-utils.mjs";
 
 const ROOT_DIR = path.resolve(".");
 const CONFIG_FILE = path.resolve(ROOT_DIR, "config.json");
@@ -29,6 +30,9 @@ const contentTypes = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".heic": "image/heic",
+  ".heif": "image/heif",
   ".gif": "image/gif",
   ".mp4": "video/mp4",
   ".webm": "video/webm",
@@ -53,6 +57,7 @@ const state = {
   lastError: null,
   scanPromise: null,
   watchTimer: null,
+  fsQuickFingerprint: null,
 };
 
 async function readConfig() {
@@ -75,6 +80,17 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function toBool(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+  }
+  if (typeof value === "number") return value !== 0;
+  return fallback;
+}
+
 async function pathExists(p) {
   try {
     await fs.access(p);
@@ -82,6 +98,52 @@ async function pathExists(p) {
   } catch {
     return false;
   }
+}
+
+function buildFilesystemFingerprintFromIndex(files) {
+  const digest = crypto.createHash("sha1");
+  for (const f of files) {
+    if (!f || typeof f.url !== "string") continue;
+    if (!f.url.startsWith("/media/")) continue;
+    const size = Number.isFinite(f.size) ? f.size : 0;
+    const mtimeMs = Number.isFinite(f.mtimeMs) ? Math.floor(f.mtimeMs) : 0;
+    digest.update(`${f.url}|${size}|${mtimeMs}\n`);
+  }
+  return digest.digest("hex").slice(0, 16);
+}
+
+function sanitizeFilename(name) {
+  const base = path.basename(String(name || "").trim());
+  const cleaned = base.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_");
+  return cleaned || `upload_${Date.now()}`;
+}
+
+function parseMultipartParts(buffer, boundary) {
+  const token = Buffer.from(`--${boundary}`);
+  const parts = [];
+  let start = buffer.indexOf(token);
+  while (start !== -1) {
+    start += token.length;
+    if (buffer[start] === 45 && buffer[start + 1] === 45) break;
+    if (buffer[start] === 13 && buffer[start + 1] === 10) start += 2;
+    const next = buffer.indexOf(token, start);
+    if (next === -1) break;
+    let end = next;
+    if (buffer[end - 2] === 13 && buffer[end - 1] === 10) end -= 2;
+    parts.push(buffer.slice(start, end));
+    start = next;
+  }
+  return parts;
+}
+
+function parseContentDisposition(value) {
+  const out = { name: "", filename: "" };
+  if (!value) return out;
+  const n = value.match(/name="([^"]+)"/i);
+  const f = value.match(/filename="([^"]*)"/i);
+  if (n) out.name = n[1];
+  if (f) out.filename = f[1];
+  return out;
 }
 
 async function boot() {
@@ -109,10 +171,20 @@ async function boot() {
   const WATCH_DEBOUNCE_MS = Number(
     process.env.WATCH_DEBOUNCE_MS || cfg.watchDebounceMs,
   );
+  const FILESYSTEM_REFRESH_MS = Number(
+    process.env.FILESYSTEM_REFRESH_MS || cfg.filesystemRefreshMs || 15000,
+  );
   const AUTOINDEX_REFRESH_MS = Number(
     process.env.AUTOINDEX_REFRESH_MS || cfg.autoindexRefreshMs || 20000,
   );
-  const DEBUG = String(process.env.DEBUG ?? cfg.debug).toLowerCase() === "true";
+  const MAX_UPLOAD_BYTES = Number(
+    process.env.MAX_UPLOAD_BYTES || cfg.maxUploadBytes || 300 * 1024 * 1024,
+  );
+  const FAST_INDEX_MODE = toBool(
+    process.env.FAST_INDEX_MODE ?? cfg.fastIndexMode,
+    false,
+  );
+  const DEBUG = toBool(process.env.DEBUG ?? cfg.debug, false);
 
   const log = (...args) => {
     if (!DEBUG) return;
@@ -319,8 +391,9 @@ async function boot() {
       state.generatedAt = parsed.generatedAt || null;
       state.count = parsed.count || parsed.files.length;
       state.files = parsed.files;
+      state.fsQuickFingerprint = buildFilesystemFingerprintFromIndex(parsed.files);
       log(
-        `Loaded persisted index version=${state.version || "n/a"} count=${state.count}`,
+        `Loaded persisted index version=${state.version || "n/a"} count=${state.count} fsQuick=${state.fsQuickFingerprint || "n/a"}`,
       );
       return true;
     } catch {
@@ -339,7 +412,49 @@ async function boot() {
     thumbCacheDir: THUMB_CACHE_DIR,
     log,
     detectLivePhotoFilesystem: liveService.detectLivePhotoFilesystem,
+    fastIndexMode: FAST_INDEX_MODE,
   });
+
+  async function buildFilesystemQuickFingerprint() {
+    if (!(SOURCE_MODE === "filesystem" || SOURCE_MODE === "mixed")) return null;
+    const digest = crypto.createHash("sha1");
+    for (let rootIdx = 0; rootIdx < MEDIA_ROOTS.length; rootIdx += 1) {
+      const mediaRoot = MEDIA_ROOTS[rootIdx];
+      const stack = [mediaRoot];
+      while (stack.length) {
+        const currentDir = stack.pop();
+        let entries = [];
+        try {
+          entries = await fs.readdir(currentDir, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const entry of entries) {
+          if (
+            entry.isDirectory() &&
+            [".thumb-cache", ".temp_livephotos"].includes(entry.name)
+          ) {
+            continue;
+          }
+          const full = path.join(currentDir, entry.name);
+          if (entry.isDirectory()) {
+            stack.push(full);
+            continue;
+          }
+          if (!entry.isFile()) continue;
+          const rel = toPosix(path.relative(mediaRoot, full));
+          if (!detectType(rel)) continue;
+          try {
+            const st = await fs.stat(full);
+            digest.update(
+              `${rootIdx}/${rel}|${st.size}|${Math.floor(st.mtimeMs)}\n`,
+            );
+          } catch {}
+        }
+      }
+    }
+    return digest.digest("hex").slice(0, 16);
+  }
 
   async function ensureScan() {
     if (state.scanPromise) return state.scanPromise;
@@ -363,8 +478,11 @@ async function boot() {
         state.generatedAt = payload.generatedAt;
         state.count = payload.count;
         state.files = payload.files;
+        state.fsQuickFingerprint = buildFilesystemFingerprintFromIndex(
+          payload.files,
+        );
         log(
-          `Scan state=ready refreshing=false count=${state.count} version=${state.version}`,
+          `Scan state=ready refreshing=false count=${state.count} version=${state.version} fsQuick=${state.fsQuickFingerprint || "n/a"}`,
         );
         return payload;
       } catch (err) {
@@ -392,6 +510,30 @@ async function boot() {
     state.watchTimer = setTimeout(() => {
       ensureScan().catch(() => {});
     }, WATCH_DEBOUNCE_MS);
+  }
+
+  async function triggerScanIfFilesystemChanged(reason = "periodic") {
+    if (!(SOURCE_MODE === "filesystem" || SOURCE_MODE === "mixed")) return;
+    if (state.scanPromise) return;
+    const quick = await buildFilesystemQuickFingerprint().catch(() => null);
+    if (!quick) {
+      triggerScanDebounced();
+      return;
+    }
+    if (!state.fsQuickFingerprint) {
+      state.fsQuickFingerprint = quick;
+      log(`FS quick baseline=${quick} reason=${reason}`);
+      return;
+    }
+    if (quick !== state.fsQuickFingerprint) {
+      log(
+        `FS quick changed old=${state.fsQuickFingerprint} new=${quick} reason=${reason}`,
+      );
+      state.fsQuickFingerprint = quick;
+      triggerScanDebounced();
+      return;
+    }
+    log(`FS quick unchanged=${quick} reason=${reason}`);
   }
 
   const server = http.createServer(async (req, res) => {
@@ -434,6 +576,8 @@ async function boot() {
           name: f.name,
           type: f.type,
           date: f.date,
+          dateGroup: typeof f.dateGroup === "string" ? f.dateGroup : "",
+          folderGroup: typeof f.folderGroup === "string" ? f.folderGroup : "",
           width: Number.isFinite(f.width) ? f.width : null,
           height: Number.isFinite(f.height) ? f.height : null,
           thumb128Url: typeof f.thumb128Url === "string" ? f.thumb128Url : "",
@@ -594,6 +738,97 @@ async function boot() {
       }
     }
 
+    if (pathname === "/api/upload-media") {
+      if (req.method !== "POST") {
+        res.writeHead(405);
+        return res.end("Method not allowed");
+      }
+      if (!(SOURCE_MODE === "filesystem" || SOURCE_MODE === "mixed")) {
+        return json(res, 400, {
+          error: "Subida disponible solo en sourceMode filesystem/mixed",
+        });
+      }
+      const contentType = String(req.headers["content-type"] || "");
+      const boundaryMatch = contentType.match(/boundary=([^;]+)/i);
+      if (!boundaryMatch) {
+        return json(res, 400, { error: "multipart/form-data requerido" });
+      }
+      const boundary = boundaryMatch[1];
+      const targetRootIdxRaw = Number(url.searchParams.get("root") || 0);
+      const targetRootIdx = Number.isInteger(targetRootIdxRaw)
+        ? targetRootIdxRaw
+        : 0;
+      const mediaRoot = MEDIA_ROOTS[targetRootIdx];
+      if (!mediaRoot) {
+        return json(res, 400, { error: "Media root inválido" });
+      }
+      const uploadDir = path.resolve(mediaRoot, "Uploads");
+      if (!uploadDir.startsWith(mediaRoot)) {
+        return json(res, 403, { error: "Destino inválido" });
+      }
+      try {
+        await fs.mkdir(uploadDir, { recursive: true });
+      } catch (err) {
+        return json(res, 500, {
+          error: `No se pudo crear carpeta destino (${err.message})`,
+        });
+      }
+      const chunks = [];
+      let total = 0;
+      for await (const chunk of req) {
+        total += chunk.length;
+        if (total > MAX_UPLOAD_BYTES) {
+          return json(res, 413, {
+            error: `Payload demasiado grande. Límite: ${MAX_UPLOAD_BYTES} bytes`,
+          });
+        }
+        chunks.push(chunk);
+      }
+      const body = Buffer.concat(chunks);
+      const parts = parseMultipartParts(body, boundary);
+      const saved = [];
+      for (const part of parts) {
+        const sep = part.indexOf(Buffer.from("\r\n\r\n"));
+        if (sep < 0) continue;
+        const headerRaw = part.slice(0, sep).toString("utf8");
+        const content = part.slice(sep + 4);
+        const headers = headerRaw.split("\r\n");
+        const cdLine = headers.find((h) =>
+          h.toLowerCase().startsWith("content-disposition:"),
+        );
+        const cd = parseContentDisposition(cdLine || "");
+        if (!cd.filename || !content.length) continue;
+        const safeName = sanitizeFilename(cd.filename);
+        let outPath = path.resolve(uploadDir, safeName);
+        if (!outPath.startsWith(uploadDir)) continue;
+        const ext = path.extname(safeName);
+        const stem = path.basename(safeName, ext);
+        let i = 1;
+        while (await pathExists(outPath)) {
+          outPath = path.resolve(uploadDir, `${stem}_${i}${ext}`);
+          i += 1;
+        }
+        await fs.writeFile(outPath, content);
+        const rel = outPath.slice(mediaRoot.length).replace(/^[\\/]+/, "");
+        saved.push({
+          name: path.basename(outPath),
+          url: `/media/${targetRootIdx}/${rel.split(path.sep).join("/")}`,
+          bytes: content.length,
+        });
+      }
+      if (saved.length === 0) {
+        return json(res, 400, { error: "No se recibieron archivos" });
+      }
+      triggerScanDebounced();
+      ensureScan().catch(() => {});
+      return json(res, 200, {
+        ok: true,
+        uploaded: saved.length,
+        files: saved,
+        indexing: true,
+      });
+    }
+
     if (pathname === "/api/cache-stats") {
       if (req.method !== "GET") {
         res.writeHead(405);
@@ -696,12 +931,21 @@ async function boot() {
   if (SOURCE_MODE === "filesystem" || SOURCE_MODE === "mixed") {
     for (const mediaRoot of MEDIA_ROOTS) {
       try {
-        fs.watch(mediaRoot, { recursive: true }, () => triggerScanDebounced());
+        fs.watch(mediaRoot, { recursive: true }, () => {
+          triggerScanIfFilesystemChanged("fs-watch").catch(() => {});
+        });
         log(`Watching filesystem path=${mediaRoot}`);
       } catch {
         // Keep service running even if recursive watch is not supported.
         log(`fs.watch recursive not available for ${mediaRoot}`);
       }
+    }
+    if (FILESYSTEM_REFRESH_MS > 0) {
+      log(`Filesystem periodic refresh everyMs=${FILESYSTEM_REFRESH_MS}`);
+      setInterval(
+        () => triggerScanIfFilesystemChanged("filesystem-periodic").catch(() => {}),
+        FILESYSTEM_REFRESH_MS,
+      );
     }
   }
   if (SOURCE_MODE === "autoindex" || SOURCE_MODE === "mixed") {

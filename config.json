@@ -12,6 +12,8 @@
   ],
   "mediaIndexFile": "./media-index.json",
   "watchDebounceMs": 1200,
+  "filesystemRefreshMs": 15000,
   "autoindexRefreshMs": 20000,
+  "fastIndexMode": true,
   "debug": true
 }

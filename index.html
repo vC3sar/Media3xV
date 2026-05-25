@@ -455,6 +455,16 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
     padding: 8px 12px;
     gap: 8px;
   }
+  #statsRow { gap: 6px !important; }
+  .stat-chip--compact {
+    padding: 4px 8px;
+    font-size: 11px;
+    border-radius: 999px;
+  }
+  .stat-chip--compact svg {
+    width: 12px;
+    height: 12px;
+  }
 }
 
 /* ── DRAG OVER ── */
@@ -497,6 +507,11 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       Todos los archivos
       <span id="cnt-all" style="margin-left:auto;font-size:11px;font-family:var(--mono);background:var(--border);padding:1px 6px;border-radius:5px;"></span>
+    </div>
+    <div class="nav-item" onclick="setTypeFilter('recent',this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+      Recién agregados
+      <span id="cnt-recent" style="margin-left:auto;font-size:11px;font-family:var(--mono);background:var(--border);padding:1px 6px;border-radius:5px;"></span>
     </div>
     <div class="nav-item" onclick="setTypeFilter('image',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
@@ -619,6 +634,11 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
     <button class="tbtn" id="cfgBtn" onclick="openConfigModal()" title="Configuración">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0A1.65 1.65 0 0 0 9.91 3H10a2 2 0 1 1 4 0h.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0A1.65 1.65 0 0 0 21 9.91H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
+    <button class="tbtn" id="uploadBtn" onclick="openUploadPicker()" title="Subir fotos/videos">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <span>Subir</span>
+    </button>
+    <input id="uploadInput" type="file" multiple accept="image/*,video/*,audio/*" style="display:none;">
   </header>
 
   <!-- SUBBAR -->

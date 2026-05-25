@@ -1,7 +1,7 @@
 import path from "node:path";
 import { URL } from "node:url";
 
-const IMG = /\.(jpg|jpeg|png|gif|webp|bmp|heic)$/i;
+const IMG = /\.(jpg|jpeg|png|gif|webp|bmp|heic|heif|avif)$/i;
 const VID = /\.(mp4|webm|mov|mkv|avi|3gp)$/i;
 const AUD = /\.(mp3|m4a|wav|ogg|flac)$/i;
 
