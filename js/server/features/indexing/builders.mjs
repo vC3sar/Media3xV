@@ -1,6 +1,7 @@
 import { URL } from "node:url";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   detectType,
   dedupeFilesByUrl,
@@ -88,9 +89,9 @@ async function probeDimensions(absInput) {
 }
 
 async function ensureImageThumbFilesystem(ctx, mediaSrc, mtimeMs, absInput, size = 512) {
-  const { fs, path, thumbCacheDir, crypto, log } = ctx;
+  const { fs, path, thumbCacheDir, log } = ctx;
   if (!thumbCacheDir) return;
-  const hash = crypto.createHash("sha1").update(`img|${mediaSrc}|${Math.floor(mtimeMs)}|${size}`).digest("hex");
+  const hash = createHash("sha1").update(`img|${mediaSrc}|${Math.floor(mtimeMs)}|${size}`).digest("hex");
   const outFile = path.resolve(thumbCacheDir, `${hash}.webp`);
   try {
     const st = await fs.stat(outFile);
@@ -155,7 +156,7 @@ async function buildFilesystemIndex(ctx) {
           ? `/thumb/image?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}&size=512`
           : null;
       files.push({
-        id: crypto.createHash("sha1").update(mediaSrc).digest("hex").slice(0, 16),
+        id: createHash("sha1").update(mediaSrc).digest("hex").slice(0, 16),
         url: mediaSrc,
         name,
         type,
@@ -231,7 +232,7 @@ async function buildAutoindexIndex(ctx) {
         const thumb512Url =
           type === "image" ? `/thumb/image?src=${encodeURIComponent(url.href)}&v=0&size=512` : null;
         files.push({
-          id: ctx.crypto.createHash("sha1").update(url.href).digest("hex").slice(0, 16),
+          id: createHash("sha1").update(url.href).digest("hex").slice(0, 16),
           url: url.href,
           name,
           type,
@@ -259,7 +260,7 @@ async function buildAutoindexIndex(ctx) {
 }
 
 function buildIndexPayloadFactory(ctx) {
-  const { sourceMode, log, crypto } = ctx;
+  const { sourceMode, log } = ctx;
   return async function buildIndexPayload() {
     log(`Index build start mode=${sourceMode}`);
     const filesRaw =
@@ -274,7 +275,7 @@ function buildIndexPayloadFactory(ctx) {
     const filesByUrl = dedupeFilesByUrl(filesRaw);
     const files = sourceMode === "mixed" ? dedupeMixedImagesByFingerprint(filesByUrl) : filesByUrl;
     files.sort((a, b) => a.url.localeCompare(b.url));
-    const version = crypto.createHash("sha1").update(JSON.stringify(files)).digest("hex").slice(0, 12);
+    const version = createHash("sha1").update(JSON.stringify(files)).digest("hex").slice(0, 12);
     log(`Index build done mode=${sourceMode} count=${files.length} version=${version}`);
     return {
       status: "ready",

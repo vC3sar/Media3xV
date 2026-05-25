@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 
 function createLiveService(ctx) {
   const {
     fs,
     path,
-    crypto,
     createReadStream,
     mediaRoots,
     liveSnapshotDir,
@@ -112,7 +112,7 @@ function createLiveService(ctx) {
   }
 
   function getLiveWebOutFile(src, v, absVideoPath) {
-    const hash = crypto.createHash("sha1").update(`${src}|${v}|web`).digest("hex");
+    const hash = createHash("sha1").update(`${src}|${v}|web`).digest("hex");
     return path.resolve(
       liveWebDir,
       `${path.basename(absVideoPath, path.extname(absVideoPath))}_web_${hash.slice(0, 8)}.mp4`,
@@ -189,7 +189,7 @@ function createLiveService(ctx) {
         res.end("Not a live photo");
         return;
       }
-      const hash = crypto.createHash("sha1").update(`${src}|${v}|snapshot`).digest("hex");
+      const hash = createHash("sha1").update(`${src}|${v}|snapshot`).digest("hex");
       const outFile = path.resolve(liveSnapshotDir, `${hash}.jpg`);
       try {
         const st = await fs.stat(outFile);

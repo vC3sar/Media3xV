@@ -42,6 +42,9 @@ let sentinelObs = null;
 let viewerVideoErrBound = false;
 let viewerVideoPerf = null;
 let thumbLoadingSuspended = false;
+let viewerPriorityToken = 0;
+let viewerPriorityActive = false;
+let viewerIsOpen = false;
 let viewerLivePlayBound = false;
 let liveStatusTimer = null;
 const appStore = createStore({
@@ -338,9 +341,11 @@ function resetThumbPrewarmState() {
 }
 
 async function fetchThumbWithRetry(url, retries = THUMB_PREWARM_RETRIES) {
+  if (thumbLoadingSuspended) throw new Error('suspended');
   let attempt = 0;
   while (attempt <= retries) {
     try {
+      if (thumbLoadingSuspended) throw new Error('suspended');
       const res = await fetch(url, { cache: 'no-store' });
       if (res.ok) return true;
       throw new Error(`HTTP ${res.status}`);
@@ -354,6 +359,7 @@ async function fetchThumbWithRetry(url, retries = THUMB_PREWARM_RETRIES) {
 }
 
 function drainThumbPrewarmQueue() {
+  if (thumbLoadingSuspended) return;
   while (thumbPrewarmActive < THUMB_PREWARM_CONCURRENCY && thumbPrewarmQueue.length > 0) {
     const task = thumbPrewarmQueue.shift();
     if (!task || !task.url) continue;
@@ -1244,9 +1250,35 @@ function suspendThumbLoading(on) {
     lazyObs.disconnect();
     videoReleaseObs.disconnect();
     videoLoader.cancelByPrefix('video:thumb:');
+    document.querySelectorAll('[data-src][data-type]').forEach((el) => {
+      const st = getThumbNodeState(el);
+      if (st.abortController) st.abortController.abort();
+      st.inFlightPromise = null;
+      if (st.status === 'loading') st.status = 'stale';
+      el.dataset.loading = '0';
+    });
     return;
   }
   resubscribeThumbObservers();
+}
+
+function beginViewerPriorityLoad() {
+  viewerPriorityToken += 1;
+  viewerPriorityActive = true;
+  suspendThumbLoading(true);
+  preloadManager.reset();
+  return viewerPriorityToken;
+}
+
+function endViewerPriorityLoad(token, preloadNeighbors = true) {
+  if (!token || token !== viewerPriorityToken) return;
+  if (!viewerPriorityActive) return;
+  viewerPriorityActive = false;
+  // Keep grid/background thumbnail loading paused while viewer is open.
+  // It will be resumed on closeViewer().
+  if (preloadNeighbors && document.getElementById('viewer').style.display !== 'none') {
+    preloadViewerNeighbors(currentViewerIdx);
+  }
 }
 
 // ── REORDER ───────────────────────────────────────────────────
@@ -1331,10 +1363,10 @@ document.getElementById('grp-date').classList.add('active');
 
 // ── VIEWER ────────────────────────────────────────────────────
 function openViewer(idx) {
+  viewerIsOpen = true;
   currentViewerIdx = idx;
   vZoom = 1; vOffX = 0; vOffY = 0;
-  suspendThumbLoading(true);
-  preloadManager.reset();
+  beginViewerPriorityLoad();
   renderViewer();
   document.getElementById('viewer').style.display = 'flex';
   document.body.style.overflow = 'hidden';
@@ -1342,6 +1374,7 @@ function openViewer(idx) {
 
 function preloadViewerNeighbors(centerIdx) {
   if (!Number.isInteger(centerIdx)) return;
+  if (!viewerIsOpen) return;
   preloadManager.reset();
   const targets = [];
   for (let d = 1; d <= PRELOAD_WINDOW; d += 1) {
@@ -1357,7 +1390,7 @@ function preloadViewerNeighbors(centerIdx) {
         preloadManager.enqueue({
           key: `t512:${f.id || f.url}`,
           priority: prio,
-          run: async () => { await getThumbObjectUrl(f, t512, '512'); },
+          run: async () => { await getThumbObjectUrl(f, t512, '512', undefined, true); },
         });
       }
       preloadManager.enqueue({
@@ -1398,6 +1431,7 @@ function renderViewer() {
   bindViewerVideoEvents(vid);
 
   if (f.type === 'image') {
+    const loadToken = beginViewerPriorityLoad();
     viewer.classList.remove('video-mode');
     img.style.display = 'block';
     img.removeAttribute('src');
@@ -1420,8 +1454,10 @@ function renderViewer() {
         img.src = loaded.src;
         img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
         document.getElementById('viewerZoomLbl').textContent = Math.round(vZoom*100)+'%';
+        endViewerPriorityLoad(loadToken, true);
       }).catch(() => {
         if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
+        endViewerPriorityLoad(loadToken, true);
         if (!t512) toast('No se pudo cargar la imagen');
       });
     } else {
@@ -1438,13 +1474,15 @@ function renderViewer() {
         img.src = loaded.src;
         img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
         document.getElementById('viewerZoomLbl').textContent = Math.round(vZoom*100)+'%';
+        endViewerPriorityLoad(loadToken, true);
       }).catch(() => {
         if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
+        endViewerPriorityLoad(loadToken, true);
         toast('No se pudo cargar la imagen');
       });
     }
-    preloadViewerNeighbors(currentViewerIdx);
   } else if (f.type === 'video') {
+    endViewerPriorityLoad(viewerPriorityToken, true);
     viewer.classList.add('video-mode');
     viewerVideoPerf = { openAt: nowMs(), lastPlayingAt: 0 };
     videoLoader.cancelByPrefix('video:thumb:');
@@ -1467,6 +1505,7 @@ function renderViewer() {
       startLivePrepareAndPoll(f, vid, false).catch(() => {});
     }
   } else {
+    endViewerPriorityLoad(viewerPriorityToken, true);
     viewer.classList.remove('video-mode');
     aud.style.display = 'flex';
     document.getElementById('viewerAudioName').textContent = f.name;
@@ -1477,6 +1516,7 @@ function renderViewer() {
 function closeViewer() {
   const viewer = document.getElementById('viewer');
   viewer.style.display = 'none';
+  viewerIsOpen = false;
   viewer.classList.remove('video-mode');
   const viewerVideo = document.getElementById('viewerVideo');
   viewerVideo.pause();
@@ -1486,6 +1526,8 @@ function closeViewer() {
   viewerVideoPerf = null;
   setViewerVideoFallback(null, false);
   document.body.style.overflow = '';
+  viewerPriorityToken += 1;
+  viewerPriorityActive = false;
   suspendThumbLoading(false);
 }
 
@@ -1494,7 +1536,6 @@ function viewerNav(d) {
   if (n < 0 || n >= filteredFiles.length) return;
   currentViewerIdx = n; vZoom = 1; vOffX = 0; vOffY = 0;
   renderViewer();
-  preloadViewerNeighbors(currentViewerIdx);
 }
 
 function viewerZoom(d) {
@@ -1710,7 +1751,8 @@ function makeThumbCacheKey(file, src, level = 'u') {
   return `${currentIndexVersion || 'nov'}::${fid}::${level}::${src}`;
 }
 
-async function getThumbObjectUrl(file, src, level = 'u') {
+async function getThumbObjectUrl(file, src, level = 'u', signal, allowWhenSuspended = false) {
+  if (thumbLoadingSuspended && !allowWhenSuspended) throw new Error('suspended');
   const key = makeThumbCacheKey(file, src, level);
   const cached = await idbGet(key);
   if (cached?.blob) {
@@ -1718,7 +1760,7 @@ async function getThumbObjectUrl(file, src, level = 'u') {
     idbPut(cached).catch(() => {});
     return URL.createObjectURL(cached.blob);
   }
-  const res = await fetch(src, { cache: 'no-store' });
+  const res = await fetch(src, { cache: 'no-store', signal });
   if (!res.ok) throw new Error(`Thumb HTTP ${res.status}`);
   const blob = await res.blob();
   idbPut({
@@ -1733,6 +1775,7 @@ async function getThumbObjectUrl(file, src, level = 'u') {
 }
 
 async function mountThumbWithSwap(el, file, src, level = 'u', blurPx = 0) {
+  if (thumbLoadingSuspended) throw new Error('suspended');
   const st = getThumbNodeState(el);
   if (st.abortController) st.abortController.abort();
   st.abortController = new AbortController();
@@ -1744,7 +1787,7 @@ async function mountThumbWithSwap(el, file, src, level = 'u', blurPx = 0) {
   dbg('thumb loading', { fileId: file?.id || file?.url, level, token });
 
   const promise = (async () => {
-    const objUrl = await getThumbObjectUrl(file, src, level);
+    const objUrl = await getThumbObjectUrl(file, src, level, signal);
     if (signal.aborted) {
       try { URL.revokeObjectURL(objUrl); } catch (_) {}
       throw new Error('aborted');
@@ -1855,6 +1898,7 @@ function makeThumbNode(file, isList = false) {
 }
 
 function hydrateThumbNode(el, file) {
+  if (thumbLoadingSuspended) return;
   if (!file) return;
   const st = getThumbNodeState(el);
   if (st.status === 'loading' && st.inFlightPromise) return;
@@ -1879,6 +1923,7 @@ function hydrateThumbNode(el, file) {
       st.status = st.lastSuccessSrc ? 'stale' : 'failed';
       dbg('thumb loading -> failed', { fileId: file?.id || file?.url, level: st.currentLevel, token: st.token });
       setTimeout(() => {
+        if (thumbLoadingSuspended) return;
         if (!document.body.contains(el)) return;
         hydrateThumbNode(el, file);
       }, 2200);
@@ -1886,6 +1931,7 @@ function hydrateThumbNode(el, file) {
     }
     const delay = Math.min(2000, 220 * (2 ** (next - 1)));
     setTimeout(() => {
+      if (thumbLoadingSuspended) return;
       if (!document.body.contains(el)) return;
       if (el.dataset.hydrationToken !== hydrationToken) return;
       hydrateThumbNode(el, file);

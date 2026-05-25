@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 
 async function runCommand(command, args) {
   await new Promise((resolve, reject) => {
@@ -16,7 +17,7 @@ async function runCommand(command, args) {
 }
 
 function createThumbHandler(ctx) {
-  const { fs, path, crypto, createReadStream, mediaRoots, thumbCacheDir, log } = ctx;
+  const { fs, path, createReadStream, mediaRoots, thumbCacheDir, log } = ctx;
   const THUMB_SIZE = 256;
 
   function resolveSrc(src) {
@@ -58,7 +59,7 @@ function createThumbHandler(ctx) {
     }
 
     try {
-      const hash = crypto.createHash("sha1").update(`${src}|${v}`).digest("hex");
+      const hash = createHash("sha1").update(`${src}|${v}`).digest("hex");
       const outFile = path.resolve(thumbCacheDir, `${hash}.jpg`);
 
       try {
@@ -115,7 +116,7 @@ function createThumbHandler(ctx) {
       return true;
     }
     try {
-      const hash = crypto.createHash("sha1").update(`img|${src}|${v}|${size}`).digest("hex");
+      const hash = createHash("sha1").update(`img|${src}|${v}|${size}`).digest("hex");
       const outFile = path.resolve(thumbCacheDir, `${hash}.webp`);
       try {
         const st = await fs.stat(outFile);
