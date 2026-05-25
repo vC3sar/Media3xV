@@ -129,7 +129,7 @@ function isFavorite(url) {
 }
 
 function persistFavorites() {
-  localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favoriteUrls]));
+  favoritesRepo.save(favoriteUrls);
 }
 
 function toggleFavorite(url) {
@@ -983,125 +983,6 @@ function startIndexPolling() {
 }
 
 // ── FILTER + SORT + GROUP ────────────────────────────────────
-function applyFilters() {
-  if (selectedUrls.size) {
-    const allSet = new Set(allFiles.map(f => f.url));
-    for (const u of [...selectedUrls]) {
-      if (!allSet.has(u)) selectedUrls.delete(u);
-    }
-  }
-  const q = document.getElementById('search').value.toLowerCase();
-  const isLivePhoto = f => Boolean(f?.type === 'video' && f?.livePhoto?.enabled);
-  const typeMatch = (f) => {
-    if (currentType === 'all') return true;
-    if (currentType === 'live') return isLivePhoto(f);
-    if (currentType === 'video') return f.type === 'video' && !isLivePhoto(f);
-    return f.type === currentType;
-  };
-
-  filteredFiles = allFiles.filter(f =>
-    typeMatch(f) &&
-    (currentEntry === 'all' || f.entryId === currentEntry) &&
-    (!favoritesOnly || isFavorite(f.url)) &&
-    (!q || f.name.toLowerCase().includes(q) || f.url.toLowerCase().includes(q))
-  );
-
-  if (currentSort === 'invert') {
-    filteredFiles.reverse();
-  } else {
-    filteredFiles.sort((a, b) => {
-      switch (currentSort) {
-        case 'date-desc': return dateRank(b.date) - dateRank(a.date);
-        case 'date-asc':  return dateRank(a.date) - dateRank(b.date);
-        case 'name-asc':  return a.name.localeCompare(b.name);
-        case 'name-desc': return b.name.localeCompare(a.name);
-        case 'heavy-desc':return b.size - a.size;
-        case 'heavy-asc': return a.size - b.size;
-        default: return 0;
-      }
-    });
-  }
-
-  groupMap = {};
-  for (const f of filteredFiles) {
-    const typeLabel = isLivePhoto(f)
-      ? 'Live Photos'
-      : ({ image: 'Fotos', video: 'Videos', audio: 'Audio' }[f.type] || 'Otros');
-    const key = currentGroup === 'date' ? monthGroupKey(f.date)
-              : currentGroup === 'type' ? typeLabel
-              : 'Todos los archivos';
-    if (!groupMap[key]) groupMap[key] = [];
-    groupMap[key].push(f);
-  }
-  groupKeys = Object.keys(groupMap);
-  if (currentGroup === 'date') {
-    groupKeys.sort((a, b) => currentSort === 'date-asc'
-      ? monthGroupRank(a) - monthGroupRank(b)
-      : monthGroupRank(b) - monthGroupRank(a));
-  }
-
-  updateStats();
-  renderedGroups = 0;
-  renderChunk();
-  resetInfiniteObserver();
-  const typeCount = { image: 0, video: 0, live: 0, audio: 0 };
-  filteredFiles.forEach(f => {
-    if (isLivePhoto(f)) typeCount.live += 1;
-    else if (f.type === 'video') typeCount.video += 1;
-    else typeCount[f.type] = (typeCount[f.type] || 0) + 1;
-  });
-  dbg('applyFilters', {
-    allFiles: allFiles.length,
-    filteredFiles: filteredFiles.length,
-    groups: groupKeys.length,
-    firstGroupKeys: groupKeys.slice(0, 5),
-    typeCount,
-    fallbackDateCount: dataMetrics.fallbackDateCount
-  });
-}
-
-function prettyDate(d) {
-  if (d === '0000-sin-fecha') return 'Sin fecha';
-  const [y, m] = d.split('-');
-  if (m === 'XX') return y;
-  const mo = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-  return `${mo[parseInt(m)-1]} ${y}`;
-}
-
-function dateRank(dateStr) {
-  if (!dateStr || dateStr === '0000-sin-fecha') return 0;
-  const [yRaw, mRaw, dRaw] = String(dateStr).split('-');
-  const y = Number(yRaw) || 0;
-  const m = mRaw === 'XX' ? 0 : (Number(mRaw) || 0);
-  const d = dRaw === 'XX' ? 0 : (Number(dRaw) || 0);
-  return (y * 10000) + (m * 100) + d;
-}
-
-function monthGroupKey(dateStr) {
-  if (!dateStr || dateStr === '0000-sin-fecha') return '0000-00';
-  const [yRaw, mRaw] = String(dateStr).split('-');
-  const y = Number(yRaw) || 0;
-  const m = mRaw === 'XX' ? 0 : (Number(mRaw) || 0);
-  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}`;
-}
-
-function monthGroupRank(groupKey) {
-  const [yRaw, mRaw] = String(groupKey).split('-');
-  const y = Number(yRaw) || 0;
-  const m = Number(mRaw) || 0;
-  return (y * 100) + m;
-}
-
-function monthGroupLabel(groupKey) {
-  if (groupKey === '0000-00') return 'Sin fecha';
-  const [yRaw, mRaw] = String(groupKey).split('-');
-  const y = Number(yRaw) || 0;
-  const m = Number(mRaw) || 0;
-  if (!m) return String(y);
-  const mo = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-  return `${mo[m-1]} ${y}`;
-}
-
 // ── STATS ────────────────────────────────────────────────────
 function updateStats() {
   const c = {image:0,video:0,live:0,audio:0};
@@ -1523,6 +1404,16 @@ function renderViewer() {
     const t512 = f.thumb512Url || f.thumbUrl || '';
     const preferOriginalFirst = useStaticViewportOnIosMobile();
     if (preferOriginalFirst) {
+      // iPhone: show a good preview quickly, then upgrade to original.
+      if (t512) {
+        window.MediaLoader.loadImageWithRetry(t512, { retries: 1, retryDelayMs: 120 }).then(loaded => {
+          if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
+          img.style.opacity = '0.92';
+          img.src = loaded.src;
+          img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
+          document.getElementById('viewerZoomLbl').textContent = Math.round(vZoom*100)+'%';
+        }).catch(() => {});
+      }
       window.MediaLoader.loadImageWithRetry(f.url, { retries: 3, retryDelayMs: 220 }).then(loaded => {
         if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
         img.style.opacity = '1';
@@ -1531,21 +1422,7 @@ function renderViewer() {
         document.getElementById('viewerZoomLbl').textContent = Math.round(vZoom*100)+'%';
       }).catch(() => {
         if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
-        if (!t512) {
-          toast('No se pudo cargar la imagen');
-          return;
-        }
-        window.MediaLoader.loadImageWithRetry(t512, { retries: 1, retryDelayMs: 120 }).then(loaded => {
-          if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
-          img.style.opacity = '0.9';
-          img.src = loaded.src;
-          img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
-          document.getElementById('viewerZoomLbl').textContent = Math.round(vZoom*100)+'%';
-          toast('Mostrando vista previa (original no disponible)');
-        }).catch(() => {
-          if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
-          toast('No se pudo cargar la imagen');
-        });
+        if (!t512) toast('No se pudo cargar la imagen');
       });
     } else {
       window.MediaLoader.loadImageWithRetry(t512 || f.url, { retries: 1, retryDelayMs: 120 }).then(loaded => {
@@ -2421,74 +2298,63 @@ window.addEventListener('resize', () => {
   }, 180);
 });
 
-function renderChunk() {
-  rebuildVirtualRows();
-  renderVirtualViewport();
-}
-
-function resetInfiniteObserver() {
-  if (sentinelObs) sentinelObs.disconnect();
-  sentinelObs = null;
-}
-
-function resubscribeThumbObservers() {}
-
-function suspendThumbLoading(on) {
-  thumbLoadingSuspended = on;
-  if (!on) scheduleVirtualRender();
-}
-
 function applyFilters() {
-  const q = document.getElementById('search').value.toLowerCase();
-  const isLivePhoto = f => Boolean(f?.type === 'video' && f?.livePhoto?.enabled);
-  const typeMatch = (f) => {
-    if (currentType === 'all') return true;
-    if (currentType === 'live') return isLivePhoto(f);
-    if (currentType === 'video') return f.type === 'video' && !isLivePhoto(f);
-    return f.type === currentType;
-  };
-  filteredFiles = allFiles.filter(f =>
-    typeMatch(f) &&
-    (currentEntry === 'all' || f.entryId === currentEntry) &&
-    (!favoritesOnly || isFavorite(f.url)) &&
-    (!q || f.name.toLowerCase().includes(q) || f.url.toLowerCase().includes(q))
-  );
-  if (currentSort === 'invert') filteredFiles.reverse();
-  else {
-    filteredFiles.sort((a, b) => {
-      switch (currentSort) {
-        case 'date-desc': return dateRank(b.date) - dateRank(a.date);
-        case 'date-asc': return dateRank(a.date) - dateRank(b.date);
-        case 'name-asc': return a.name.localeCompare(b.name);
-        case 'name-desc': return b.name.localeCompare(a.name);
-        case 'heavy-desc': return b.size - a.size;
-        case 'heavy-asc': return a.size - b.size;
-        default: return 0;
-      }
-    });
-  }
-  groupMap = {};
-  for (const f of filteredFiles) {
-    const typeLabel = isLivePhoto(f)
-      ? 'Live Photos'
-      : ({ image: 'Fotos', video: 'Videos', audio: 'Audio' }[f.type] || 'Otros');
-    const key = currentGroup === 'date' ? monthGroupKey(f.date)
-      : currentGroup === 'type' ? typeLabel
-      : 'Todos los archivos';
-    if (!groupMap[key]) groupMap[key] = [];
-    groupMap[key].push(f);
-  }
-  groupKeys = Object.keys(groupMap);
-  if (currentGroup === 'date') {
-    groupKeys.sort((a, b) => currentSort === 'date-asc'
-      ? monthGroupRank(a) - monthGroupRank(b)
-      : monthGroupRank(b) - monthGroupRank(a));
-  }
+  const query = document.getElementById('search').value || '';
+  const result = applyFiltersUseCase({
+    allFiles,
+    favoritesOnly,
+    currentType,
+    currentEntry,
+    currentSort,
+    currentGroup,
+    query,
+    isFavorite,
+  });
+  filteredFiles = result.filteredFiles;
+  groupMap = result.groupMap;
+  groupKeys = result.groupKeys;
+  appStore.setState({
+    allFiles,
+    filteredFiles,
+    sizeIdx,
+    lastDesktopSizeIdx,
+    layoutMode,
+    currentSort,
+    currentGroup,
+    currentType,
+    currentEntry,
+    favoritesOnly,
+  });
   updateSelectionUI();
   updateStats();
   rebuildVirtualRows();
   scheduleVirtualRender();
 }
+
+Object.assign(window, {
+  openSidebar,
+  closeSidebar,
+  toggleFavoritesOnly,
+  toggleSortMenu,
+  setSort,
+  toggleLayout,
+  toggleSelectMode,
+  deleteSelectedFiles,
+  setTypeFilter,
+  setGroup,
+  stepZoom,
+  setZoomBySlider,
+  openConfigModal,
+  closeConfigModal,
+  loadConfigModalData,
+  saveConfigModalData,
+  cleanupCacheTargets,
+  loadCacheStats,
+  toggleViewerFavorite,
+  closeViewer,
+  viewerNav,
+  viewerZoom,
+});
 
 // ── INIT ──────────────────────────────────────────────────────
 (async () => {
