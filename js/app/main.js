@@ -1434,6 +1434,11 @@ function renderViewer() {
     const loadToken = beginViewerPriorityLoad();
     viewer.classList.remove('video-mode');
     img.style.display = 'block';
+    img.style.width = '92vw';
+    img.style.height = '82vh';
+    img.style.maxWidth = '92vw';
+    img.style.maxHeight = '82vh';
+    img.style.objectFit = 'contain';
     img.removeAttribute('src');
     const t512 = f.thumb512Url || f.thumbUrl || '';
     const preferOriginalFirst = useStaticViewportOnIosMobile();
