@@ -191,6 +191,28 @@ function updateSelectionUI() {
   syncStickyBars();
 }
 
+function refreshVisibleSelectionState() {
+  document.querySelectorAll('.media-card[data-url], .list-row[data-url]').forEach((el) => {
+    const url = el.dataset.url || '';
+    const selected = Boolean(selectionMode && url && selectedUrls.has(url));
+    el.classList.toggle('selected', selected);
+    const prev = el.querySelector('.sel-indicator');
+    if (!selected) {
+      if (prev) prev.remove();
+      return;
+    }
+    if (prev) return;
+    const mark = document.createElement('div');
+    mark.className = 'sel-indicator';
+    mark.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="width:12px;height:12px"><polyline points="20 6 9 17 4 12"/></svg>';
+    if (el.classList.contains('list-row')) {
+      el.insertBefore(mark, el.firstChild);
+    } else {
+      el.appendChild(mark);
+    }
+  });
+}
+
 function toggleSelectMode() {
   selectionMode = !selectionMode;
   if (!selectionMode) {
@@ -198,9 +220,7 @@ function toggleSelectMode() {
     lastSelectedUrl = '';
   }
   updateSelectionUI();
-  invalidateVirtualRowCache();
-  virtualState.lastStartIdx = -1;
-  scheduleVirtualRender();
+  refreshVisibleSelectionState();
 }
 
 function getFilteredIndexByUrl(url) {
@@ -235,9 +255,7 @@ function handleItemSelection(file, evt) {
     lastSelectedUrl = url;
   }
   updateSelectionUI();
-  invalidateVirtualRowCache();
-  virtualState.lastStartIdx = -1;
-  scheduleVirtualRender();
+  refreshVisibleSelectionState();
   return true;
 }
 
@@ -959,6 +977,7 @@ function normalizeIndexedFile(f) {
     width: Number.isFinite(f?.width) ? Number(f.width) : null,
     height: Number.isFinite(f?.height) ? Number(f.height) : null,
     size: Number.isFinite(f.size) ? f.size : 0,
+    mtimeMs: Number.isFinite(f?.mtimeMs) ? Number(f.mtimeMs) : 0,
     thumbUrl: (typeof f?.thumbUrl === 'string' && f.thumbUrl.trim()) ? f.thumbUrl.trim() : '',
     thumb128Url: (typeof f?.thumb128Url === 'string' && f.thumb128Url.trim())
       ? f.thumb128Url.trim()
@@ -1764,6 +1783,7 @@ const THUMB_DB_VERSION = 1;
 const THUMB_MAX_BYTES = 220 * 1024 * 1024;
 const THUMB_TTL_MS = 1000 * 60 * 60 * 24 * 21;
 const VIRTUAL_OVERSCAN_PX = 900;
+const GRID_PREVIEW_NEIGHBOR_ROWS = 2;
 const virtualState = {
   rows: [],
   offsets: [],
@@ -1999,7 +2019,7 @@ function invalidateVirtualRowCache() {
   virtualState.rowNodeCache.clear();
 }
 
-function makeThumbNode(file, isList = false) {
+function makeThumbNode(file, isList = false, shouldHydrate = true) {
   const thumb = document.createElement('div');
   if (isList) thumb.className = 'list-thumb';
   thumb.style.cssText = isList ? '' : 'width:100%;height:100%;';
@@ -2013,7 +2033,7 @@ function makeThumbNode(file, isList = false) {
   st.status = 'idle';
   st.lastSuccessSrc = '';
   st.currentLevel = '';
-  hydrateThumbNode(thumb, file);
+  if (shouldHydrate) hydrateThumbNode(thumb, file);
   return thumb;
 }
 
@@ -2191,9 +2211,15 @@ function renderVirtualViewport() {
   let endIdx = virtualState.rows.length - 1;
   let topPad = 0;
   let bottomPad = 0;
+  let coreStartIdx = 0;
+  let coreEndIdx = virtualState.rows.length - 1;
   if (!staticIosViewport) {
     const rect = app.getBoundingClientRect();
     const appTop = rect.top + window.scrollY;
+    const coreViewTop = Math.max(0, window.scrollY - appTop);
+    const coreViewBottom = coreViewTop + window.innerHeight;
+    coreStartIdx = findRowIndexAt(coreViewTop);
+    coreEndIdx = Math.min(virtualState.rows.length - 1, findRowIndexAt(coreViewBottom));
     const viewTop = Math.max(0, window.scrollY - appTop - VIRTUAL_OVERSCAN_PX);
     const viewBottom = viewTop + window.innerHeight + (VIRTUAL_OVERSCAN_PX * 2);
     startIdx = findRowIndexAt(viewTop);
@@ -2222,6 +2248,13 @@ function renderVirtualViewport() {
   app.appendChild(topSpacer);
 
   const visibleSet = new Set();
+  const hydrateStartIdx = Math.max(0, coreStartIdx - GRID_PREVIEW_NEIGHBOR_ROWS);
+  const hydrateEndIdx = Math.min(
+    virtualState.rows.length - 1,
+    coreEndIdx + GRID_PREVIEW_NEIGHBOR_ROWS,
+  );
+  const shouldHydrateRow = (rowIdx) =>
+    layoutMode !== 'grid' || (rowIdx >= hydrateStartIdx && rowIdx <= hydrateEndIdx);
   const gridGap = 6;
   const appWidthNow = Math.max(320, app.clientWidth || 320);
   const cellWidthNow = Math.max(40, Math.floor((appWidthNow - (gridGap * (virtualState.gridCols - 1))) / Math.max(1, virtualState.gridCols)));
@@ -2240,6 +2273,7 @@ function renderVirtualViewport() {
       for (const f of row.files) {
         const card = document.createElement('div');
         card.className = 'media-card';
+        card.dataset.url = f.url;
         if (selectedUrls.has(f.url)) {
           card.classList.add('selected');
           const mark = document.createElement('div');
@@ -2249,7 +2283,7 @@ function renderVirtualViewport() {
         }
         card.style.aspectRatio = '1';
         card.setAttribute('draggable', 'true');
-        const thumb = makeThumbNode(f, false);
+        const thumb = makeThumbNode(f, false, shouldHydrateRow(rowIdx));
         card.appendChild(thumb);
         const ov = document.createElement('div');
         ov.className = 'card-overlay';
@@ -2288,6 +2322,7 @@ function renderVirtualViewport() {
       const gi = filteredFiles.findIndex(x => x.url === f.url);
       const el = document.createElement('div');
       el.className = 'list-row';
+      el.dataset.url = f.url;
       if (selectedUrls.has(f.url)) {
         el.classList.add('selected');
         const mark = document.createElement('div');
@@ -2296,7 +2331,7 @@ function renderVirtualViewport() {
         el.appendChild(mark);
       }
       el.style.marginBottom = '4px';
-      const thumb = makeThumbNode(f, true);
+      const thumb = makeThumbNode(f, true, shouldHydrateRow(rowIdx));
       const body = document.createElement('div');
       body.style.cssText = 'flex:1;min-width:0;';
       body.innerHTML = `<div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.name}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">${prettyDate(f.date)}</div>`;
@@ -2328,6 +2363,16 @@ function renderVirtualViewport() {
       virtualState.rowNodeCache.set(i, rowNode);
     } else {
       rehydrateFailedThumbs(rowNode);
+      if (shouldHydrateRow(i)) {
+        rowNode.querySelectorAll('[data-src][data-type]').forEach((el) => {
+          const src = el.dataset.src;
+          if (!src) return;
+          if (el.dataset.loaded === '1' || el.dataset.loading === '1') return;
+          const file = filteredFiles.find(f => f?.url === src);
+          if (!file) return;
+          hydrateThumbNode(el, file);
+        });
+      }
     }
     app.appendChild(rowNode);
   }

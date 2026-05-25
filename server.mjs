@@ -146,6 +146,20 @@ function parseContentDisposition(value) {
   return out;
 }
 
+async function runWithConcurrency(items, limit, worker) {
+  const out = new Array(items.length);
+  let idx = 0;
+  const runners = Array.from({ length: Math.max(1, limit) }, async () => {
+    while (idx < items.length) {
+      const current = idx;
+      idx += 1;
+      out[current] = await worker(items[current], current);
+    }
+  });
+  await Promise.all(runners);
+  return out;
+}
+
 async function boot() {
   const cfg = await readConfig();
   const HOST = process.env.HOST || cfg.host;
@@ -845,41 +859,41 @@ async function boot() {
         const payload = JSON.parse(body || "{}");
         const urls = Array.isArray(payload?.urls) ? payload.urls : [];
         if (!urls.length) return json(res, 400, { error: "Sin urls para borrar" });
-        const deleted = [];
-        const failed = [];
-        for (const rawUrl of urls) {
+        const results = await runWithConcurrency(urls, 8, async (rawUrl) => {
           const src = String(rawUrl || "");
           if (!src.startsWith("/media/")) {
-            failed.push({ url: src, reason: "unsupported-url" });
-            continue;
+            return { ok: false, url: src, reason: "unsupported-url" };
           }
           const relAll = src.slice("/media/".length);
           const slash = relAll.indexOf("/");
           if (slash < 1) {
-            failed.push({ url: src, reason: "bad-media-path" });
-            continue;
+            return { ok: false, url: src, reason: "bad-media-path" };
           }
           const rootIdx = Number(relAll.slice(0, slash));
           const rel = relAll.slice(slash + 1);
           const mediaRoot = MEDIA_ROOTS[rootIdx];
           if (!mediaRoot) {
-            failed.push({ url: src, reason: "media-root-not-found" });
-            continue;
+            return { ok: false, url: src, reason: "media-root-not-found" };
           }
           const abs = path.resolve(mediaRoot, rel);
           if (!abs.startsWith(mediaRoot)) {
-            failed.push({ url: src, reason: "forbidden" });
-            continue;
+            return { ok: false, url: src, reason: "forbidden" };
           }
           try {
-            const st = await fs.stat(abs);
-            if (!st.isFile()) throw new Error("not-file");
             await fs.unlink(abs);
-            deleted.push(src);
+            return { ok: true, url: src };
           } catch (err) {
-            failed.push({ url: src, reason: err?.message || "delete-failed" });
+            return {
+              ok: false,
+              url: src,
+              reason: err?.code || err?.message || "delete-failed",
+            };
           }
-        }
+        });
+        const deleted = results.filter((r) => r?.ok).map((r) => r.url);
+        const failed = results
+          .filter((r) => r && !r.ok)
+          .map((r) => ({ url: r.url, reason: r.reason }));
         if (deleted.length > 0) {
           triggerScanDebounced();
           ensureScan().catch(() => {});
