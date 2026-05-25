@@ -829,6 +829,72 @@ async function boot() {
       });
     }
 
+    if (pathname === "/api/delete-media") {
+      if (req.method !== "POST") {
+        res.writeHead(405);
+        return res.end("Method not allowed");
+      }
+      if (!(SOURCE_MODE === "filesystem" || SOURCE_MODE === "mixed")) {
+        return json(res, 400, {
+          error: "Borrado disponible solo en sourceMode filesystem/mixed",
+        });
+      }
+      try {
+        let body = "";
+        for await (const chunk of req) body += chunk;
+        const payload = JSON.parse(body || "{}");
+        const urls = Array.isArray(payload?.urls) ? payload.urls : [];
+        if (!urls.length) return json(res, 400, { error: "Sin urls para borrar" });
+        const deleted = [];
+        const failed = [];
+        for (const rawUrl of urls) {
+          const src = String(rawUrl || "");
+          if (!src.startsWith("/media/")) {
+            failed.push({ url: src, reason: "unsupported-url" });
+            continue;
+          }
+          const relAll = src.slice("/media/".length);
+          const slash = relAll.indexOf("/");
+          if (slash < 1) {
+            failed.push({ url: src, reason: "bad-media-path" });
+            continue;
+          }
+          const rootIdx = Number(relAll.slice(0, slash));
+          const rel = relAll.slice(slash + 1);
+          const mediaRoot = MEDIA_ROOTS[rootIdx];
+          if (!mediaRoot) {
+            failed.push({ url: src, reason: "media-root-not-found" });
+            continue;
+          }
+          const abs = path.resolve(mediaRoot, rel);
+          if (!abs.startsWith(mediaRoot)) {
+            failed.push({ url: src, reason: "forbidden" });
+            continue;
+          }
+          try {
+            const st = await fs.stat(abs);
+            if (!st.isFile()) throw new Error("not-file");
+            await fs.unlink(abs);
+            deleted.push(src);
+          } catch (err) {
+            failed.push({ url: src, reason: err?.message || "delete-failed" });
+          }
+        }
+        if (deleted.length > 0) {
+          triggerScanDebounced();
+          ensureScan().catch(() => {});
+        }
+        return json(res, 200, {
+          ok: failed.length === 0,
+          deleted,
+          failed,
+          indexing: deleted.length > 0,
+        });
+      } catch (err) {
+        return json(res, 400, { error: err.message || "delete payload inválido" });
+      }
+    }
+
     if (pathname === "/api/cache-stats") {
       if (req.method !== "GET") {
         res.writeHead(405);

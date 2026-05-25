@@ -4,6 +4,7 @@ import {
   CACHE_CLEANUP_URL,
   CACHE_STATS_URL,
   UPLOAD_URL,
+  DELETE_URL,
   LIVE_PREPARE_URL,
   LIVE_STATUS_URL,
   FAVORITES_KEY,
@@ -240,7 +241,7 @@ function handleItemSelection(file, evt) {
   return true;
 }
 
-function deleteSelectedFiles() {
+async function deleteSelectedFiles() {
   if (!selectionMode) return;
   if (!selectedUrls.size) {
     toast('No hay archivos seleccionados');
@@ -249,12 +250,32 @@ function deleteSelectedFiles() {
   const count = selectedUrls.size;
   const ok = window.confirm(`¿Eliminar ${count} archivo${count !== 1 ? 's' : ''} de la lista actual?`);
   if (!ok) return;
-  allFiles = allFiles.filter(f => !selectedUrls.has(f.url));
-  selectedUrls.clear();
-  lastSelectedUrl = '';
-  updateSelectionUI();
-  applyFilters();
-  toast(`${count} archivo${count !== 1 ? 's' : ''} eliminado${count !== 1 ? 's' : ''}`);
+  const urls = Array.from(selectedUrls);
+  try {
+    const res = await fetch(DELETE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls })
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+    const deletedSet = new Set(Array.isArray(payload.deleted) ? payload.deleted : []);
+    const deletedCount = deletedSet.size;
+    allFiles = allFiles.filter(f => !deletedSet.has(f.url));
+    selectedUrls.clear();
+    lastSelectedUrl = '';
+    updateSelectionUI();
+    applyFilters();
+    if (deletedCount > 0) {
+      toast(`${deletedCount} archivo${deletedCount !== 1 ? 's' : ''} eliminado${deletedCount !== 1 ? 's' : ''}`);
+    }
+    const failed = Array.isArray(payload.failed) ? payload.failed.length : 0;
+    if (failed > 0) {
+      toast(`${failed} archivo${failed !== 1 ? 's' : ''} no se pudieron borrar`, 4200);
+    }
+  } catch (err) {
+    toast(`No se pudo eliminar: ${err.message}`, 4200);
+  }
 }
 
 function queueVideoThumbLoad(el, src) {

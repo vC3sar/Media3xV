@@ -3,6 +3,7 @@ export const CONFIG_URL = "/api/config";
 export const CACHE_CLEANUP_URL = "/api/cache-cleanup";
 export const CACHE_STATS_URL = "/api/cache-stats";
 export const UPLOAD_URL = "/api/upload-media";
+export const DELETE_URL = "/api/delete-media";
 export const LIVE_PREPARE_URL = "/live/web-video-prepare";
 export const LIVE_STATUS_URL = "/live/web-video-status";
 export const FAVORITES_KEY = "media3xv:favorites";
