@@ -91,12 +91,19 @@ function createLiveService(ctx) {
     const ext = path.extname(absVideoPath).toLowerCase();
     if (![".mov", ".mp4"].includes(ext)) return null;
     const base = absVideoPath.slice(0, -ext.length);
+    const candidatesBase = new Set([base]);
+    // Common duplicate suffixes from mobile/gallery copy operations:
+    // IMG_0019(1).MP4 -> try matching still IMG_0019.HEIC
+    const noParensDup = base.replace(/\(\d+\)$/i, "");
+    if (noParensDup && noParensDup !== base) candidatesBase.add(noParensDup);
     const candidates = [".jpg", ".jpeg", ".heic", ".heif", ".png"];
-    for (const stillExt of candidates) {
-      const still = `${base}${stillExt}`;
-      if (await pathExists(still)) return still;
-      const stillUpper = `${base}${stillExt.toUpperCase()}`;
-      if (await pathExists(stillUpper)) return stillUpper;
+    for (const candidateBase of candidatesBase) {
+      for (const stillExt of candidates) {
+        const still = `${candidateBase}${stillExt}`;
+        if (await pathExists(still)) return still;
+        const stillUpper = `${candidateBase}${stillExt.toUpperCase()}`;
+        if (await pathExists(stillUpper)) return stillUpper;
+      }
     }
     return null;
   }
