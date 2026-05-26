@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
+    "start:cluster": "node server.mjs --cluster",
     "dev": "nodemon --watch server.mjs --ignore '**/.thumb-cache/**' --ignore '**/.temp_livephotos/**' --ignore '**/.git/**' --ignore '**/node_modules/**' server.mjs"
   },
   "devDependencies": {

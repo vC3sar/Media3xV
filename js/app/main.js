@@ -1177,9 +1177,7 @@ function buildGroup(label, files) {
 
 // ── GRID ─────────────────────────────────────────────────────
 function buildGrid(files) {
-  const gridGap = 6;
-  const appWidthNow = Math.max(320, app.clientWidth || 320);
-  const cellWidthNow = Math.max(40, Math.floor((appWidthNow - (gridGap * (virtualState.gridCols - 1))) / virtualState.gridCols));
+  const px = SIZE_PX[sizeIdx];
   const g = document.createElement('div');
   g.style.cssText = `display:grid;grid-template-columns:repeat(auto-fill,minmax(${px}px,1fr));gap:6px;`;
   files.forEach(f => {
@@ -1261,17 +1259,18 @@ function buildList(files) {
     if (f.type === 'video' && f.thumbUrl) thumb.dataset.thumb = f.thumbUrl;
     thumb.innerHTML = typeIco;
 
+    const rowBody = document.createElement('div');
+    rowBody.style.cssText = 'flex:1;min-width:0;';
+    rowBody.innerHTML = `<div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.name}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">${prettyDate(f.date)}</div>`;
+    const rowDl = document.createElement('a');
+    rowDl.href = f.url;
+    rowDl.download = f.name;
+    rowDl.setAttribute('onclick', 'event.stopPropagation()');
+    rowDl.style.cssText = 'background:var(--panel);border:1px solid var(--border);color:var(--muted-l);padding:5px 9px;border-radius:7px;text-decoration:none;font-size:12px;transition:background 0.15s;display:flex;align-items:center;gap:4px;';
+    rowDl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
     row.appendChild(thumb);
-    row.innerHTML += `
-      <div style="flex:1;min-width:0;">
-        <div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.name}</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${prettyDate(f.date)}</div>
-      </div>
-      <a href="${f.url}" download onclick="event.stopPropagation()" style="background:var(--panel);border:1px solid var(--border);color:var(--muted-l);padding:5px 9px;border-radius:7px;text-decoration:none;font-size:12px;transition:background 0.15s;display:flex;align-items:center;gap:4px;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      </a>
-    `;
-    row.insertBefore(thumb, row.firstChild);
+    row.appendChild(rowBody);
+    row.appendChild(rowDl);
     if (f.type === 'video') {
       row.addEventListener('mouseenter', () => {
         requestVideoThumbPreview(thumb, f.url, 0);
@@ -1322,9 +1321,7 @@ const lazyObs = new IntersectionObserver(entries => {
         el.dataset.loading = '0';
       });
     } else if (type === 'video') {
-      el.dataset.loading = '0';
       requestVideoThumbPreview(el, src, VIDEO_THUMB_DEFER_MS, true);
-      el.dataset.loading = '0';
     }
   });
 }, { rootMargin: '400px' });
@@ -1791,12 +1788,21 @@ const virtualState = {
   gridCols: 1,
   lastStartIdx: -1,
   lastEndIdx: -1,
+  lastCoreStartIdx: -1,
+  lastCoreEndIdx: -1,
   lastTopPad: -1,
   lastBottomPad: -1,
   rowNodeCache: new Map(),
 };
 let thumbDbPromise = null;
 const thumbNodeState = new WeakMap();
+let idbSweepPending = false;
+
+function scheduleIdbSweep() {
+  if (idbSweepPending) return;
+  idbSweepPending = true;
+  setTimeout(() => { idbSweep(); idbSweepPending = false; }, 5000);
+}
 
 function getThumbNodeState(el) {
   let st = thumbNodeState.get(el);
@@ -1900,7 +1906,7 @@ async function getThumbObjectUrl(file, src, level = 'u', signal, allowWhenSuspen
     idbPut(cached).catch(() => {});
     return URL.createObjectURL(cached.blob);
   }
-  const res = await fetch(src, { cache: 'no-store', signal });
+  const res = await fetch(src, { cache: 'default', signal });
   if (!res.ok) throw new Error(`Thumb HTTP ${res.status}`);
   const blob = await res.blob();
   idbPut({
@@ -1910,7 +1916,7 @@ async function getThumbObjectUrl(file, src, level = 'u', signal, allowWhenSuspen
     createdAt: Date.now(),
     touchedAt: Date.now(),
   }).catch(() => {});
-  idbSweep().catch(() => {});
+  scheduleIdbSweep();
   return URL.createObjectURL(blob);
 }
 
@@ -2047,7 +2053,7 @@ function hydrateThumbNode(el, file) {
   el.dataset.loading = '1';
   const maxRetries = 6;
   const retryCount = Number(el.dataset.retryCount || '0') || 0;
-    const retryLater = () => {
+  const retryLater = () => {
     const next = retryCount + 1;
     el.dataset.retryCount = String(next);
     el.dataset.loading = '0';
@@ -2178,6 +2184,8 @@ function rebuildVirtualRows() {
   virtualState.totalHeight = y;
   virtualState.lastStartIdx = -1;
   virtualState.lastEndIdx = -1;
+  virtualState.lastCoreStartIdx = -1;
+  virtualState.lastCoreEndIdx = -1;
   virtualState.lastTopPad = -1;
   virtualState.lastBottomPad = -1;
   for (const node of virtualState.rowNodeCache.values()) revokeObjectUrlsInNode(node);
@@ -2232,6 +2240,8 @@ function renderVirtualViewport() {
   if (
     startIdx === virtualState.lastStartIdx &&
     endIdx === virtualState.lastEndIdx &&
+    coreStartIdx === virtualState.lastCoreStartIdx &&
+    coreEndIdx === virtualState.lastCoreEndIdx &&
     topPad === virtualState.lastTopPad &&
     bottomPad === virtualState.lastBottomPad
   ) {
@@ -2240,6 +2250,8 @@ function renderVirtualViewport() {
 
   virtualState.lastStartIdx = startIdx;
   virtualState.lastEndIdx = endIdx;
+  virtualState.lastCoreStartIdx = coreStartIdx;
+  virtualState.lastCoreEndIdx = coreEndIdx;
   virtualState.lastTopPad = topPad;
   virtualState.lastBottomPad = bottomPad;
   while (app.firstChild) app.removeChild(app.firstChild);
@@ -2362,8 +2374,8 @@ function renderVirtualViewport() {
       rowNode = createRowNode(row, i);
       virtualState.rowNodeCache.set(i, rowNode);
     } else {
-      rehydrateFailedThumbs(rowNode);
       if (shouldHydrateRow(i)) {
+        rehydrateFailedThumbs(rowNode);
         rowNode.querySelectorAll('[data-src][data-type]').forEach((el) => {
           const src = el.dataset.src;
           if (!src) return;

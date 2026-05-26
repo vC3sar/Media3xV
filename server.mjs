@@ -4,6 +4,8 @@ import { promises as fs } from "node:fs";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import cluster from "node:cluster";
+import os from "node:os";
 import { URL } from "node:url";
 import {
   defaults,
@@ -1047,7 +1049,44 @@ async function boot() {
   });
 }
 
-boot().catch((err) => {
+function resolveWorkerCount() {
+  const fromEnv = Number(process.env.CLUSTER_WORKERS || 0);
+  if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv;
+  const cpuCount = Array.isArray(os.cpus()) ? os.cpus().length : 1;
+  return Math.max(1, cpuCount - 1);
+}
+
+function shouldUseCluster() {
+  const argOn = process.argv.includes("--cluster");
+  const envOn = String(process.env.ENABLE_CLUSTER || "").toLowerCase() === "true";
+  return argOn || envOn;
+}
+
+async function start() {
+  if (!shouldUseCluster()) {
+    return boot();
+  }
+  const workers = resolveWorkerCount();
+  if (workers <= 1) {
+    return boot();
+  }
+  if (cluster.isPrimary) {
+    process.stdout.write(
+      `Cluster mode ON. Primary=${process.pid} workers=${workers}\n`,
+    );
+    for (let i = 0; i < workers; i += 1) cluster.fork();
+    cluster.on("exit", (worker, code, signal) => {
+      process.stderr.write(
+        `Worker ${worker.process.pid} exited (code=${code} signal=${signal || "n/a"}). Restarting...\n`,
+      );
+      cluster.fork();
+    });
+    return;
+  }
+  return boot();
+}
+
+start().catch((err) => {
   process.stderr.write(`Failed to boot: ${err.message}\n`);
   process.exit(1);
 });
