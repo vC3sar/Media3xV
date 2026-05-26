@@ -1778,82 +1778,20 @@ function renderViewer() {
     const isLive = Boolean(f.livePhoto?.enabled);
     const needsWeb = needsWebVideoTranscode(f);
     if (isLive) {
-      setLiveHint("Intentando Live Photo…");
-      dbg("livephoto attempt", {
-        url: f.url,
-        hasLivePhotosKit: Boolean(window.LivePhotosKit),
-        hasSnapshot: Boolean(f.livePhoto?.snapshotUrl),
-        hasWebVideo: Boolean(f.livePhoto?.webVideoUrl),
-      });
-    }
-    if (
-      isLive &&
-      window.LivePhotosKit &&
-      f.livePhoto?.photoUrl &&
-      f.livePhoto?.videoUrl &&
-      livePlayerHost
-    ) {
-      img.style.display = "none";
+      // Live Photo fallback: keep static photo only.
       vid.style.display = "none";
-      livePlayerHost.style.display = "block";
-      livePlayerHost.innerHTML = "";
-      try {
-        if (typeof window.LivePhotosKit.createPlayer === "function") {
-          livePhotoKitPlayer = window.LivePhotosKit.createPlayer(
-            livePlayerHost,
-            {
-              photoSrc: f.livePhoto.photoUrl,
-              videoSrc: f.livePhoto.videoUrl,
-              controls: true,
-            },
-          );
-        } else {
-          livePhotoKitPlayer = window.LivePhotosKit.Player(livePlayerHost, {
-            photoSrc: f.livePhoto.photoUrl,
-            videoSrc: f.livePhoto.videoUrl,
-            controls: true,
-          });
-        }
-        const tryStartLive = () => {
-          try {
-            if (
-              livePhotoKitPlayer &&
-              typeof livePhotoKitPlayer.startPlayback === "function"
-            ) {
-              livePhotoKitPlayer.startPlayback();
-            }
-          } catch (_) {}
-        };
-        livePlayerHost.onclick = () => tryStartLive();
-        livePlayerHost.onmouseenter = () => tryStartLive();
-        livePlayerHost.ontouchstart = () => tryStartLive();
-        // Trigger playback explicitly so it doesn't stay as static photo.
-        setTimeout(tryStartLive, 120);
-        setTimeout(tryStartLive, 800);
-        setLiveHint("");
-        dbg("livephoto player started", { url: f.url });
-        return;
-      } catch (err) {
-        dbg("livephoto player failed", {
-          url: f.url,
-          reason: err?.message || "unknown",
-        });
-        destroyLivePhotoKitPlayer();
-      }
-    }
-
-    if (isLive && f.livePhoto?.snapshotUrl) {
-      img.style.display = "block";
-      img.src = f.livePhoto.snapshotUrl;
-      img.onerror = () => {
-        img.onerror = null;
+      if (f.livePhoto?.snapshotUrl) {
+        img.style.display = "block";
+        img.src = f.livePhoto.snapshotUrl;
+        img.style.visibility = "visible";
+        img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
+      } else {
         img.style.display = "none";
-        fallbackToDirectVideoPlayback(f, vid);
-      };
-      img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
-    } else {
-      img.style.display = "none";
+      }
+      setLiveHint("");
+      return;
     }
+    img.style.display = "none";
     vid.style.display = "block";
     vid.loop = true;
     vid.playsInline = true;
