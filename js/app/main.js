@@ -927,6 +927,14 @@ function stopLiveStatusPolling() {
 
 function fallbackToDirectVideoPlayback(file, videoEl) {
   if (!videoEl || !file?.url) return;
+  const forceWebForMov = /\.mov($|\?)/i.test(String(file.url || ""));
+  if (forceWebForMov) {
+    stopLiveStatusPolling();
+    videoEl.dataset.livePreparing = "0";
+    livePrepareInFlightKey = "";
+    setLiveHint("No se pudo generar MP4 temporal todavía. Reintentando…");
+    return;
+  }
   stopLiveStatusPolling();
   setLiveHint("");
   videoEl.dataset.liveWebReady = "1";
@@ -950,10 +958,24 @@ async function startLivePrepareAndPoll(
   const inFlightNow = videoEl.dataset.livePreparing === "1";
   const cooldownMs = 2000;
   if (inFlightNow) return false;
-  if (nowMs() - livePrepareLastStartAt < cooldownMs) return false;
+  if (nowMs() - livePrepareLastStartAt < cooldownMs) {
+    setTimeout(() => {
+      if (filteredFiles[currentViewerIdx]?.url !== file.url) return;
+      if (videoEl.dataset.liveWebReady === "1") return;
+      startLivePrepareAndPoll(file, videoEl, autoPlayWhenReady).catch(() => {});
+    }, Math.max(350, cooldownMs - Math.floor(nowMs() - livePrepareLastStartAt)));
+    return false;
+  }
   const versionKey = String(file.url);
   const requestKey = `${file.url}|${versionKey}`;
-  if (livePrepareInFlightKey && livePrepareInFlightKey === requestKey) return false;
+  if (livePrepareInFlightKey && livePrepareInFlightKey === requestKey) {
+    setTimeout(() => {
+      if (filteredFiles[currentViewerIdx]?.url !== file.url) return;
+      if (videoEl.dataset.liveWebReady === "1") return;
+      startLivePrepareAndPoll(file, videoEl, autoPlayWhenReady).catch(() => {});
+    }, 500);
+    return false;
+  }
   const prepUrl = `${LIVE_PREPARE_URL}?src=${encodeURIComponent(file.url)}&v=${encodeURIComponent(versionKey)}`;
   const statusUrl = `${LIVE_STATUS_URL}?src=${encodeURIComponent(file.url)}&v=${encodeURIComponent(versionKey)}`;
   livePrepareInFlightKey = requestKey;
@@ -963,10 +985,6 @@ async function startLivePrepareAndPoll(
   try {
     const prepRes = await fetch(prepUrl, { method: "POST" });
     const prepPayload = await prepRes.json().catch(() => ({}));
-    if (prepRes.ok && prepPayload?.live === false) {
-      fallbackToDirectVideoPlayback(file, videoEl);
-      return false;
-    }
     if (prepRes.ok && prepPayload?.ready && prepPayload?.url) {
       videoEl.dataset.liveWebReady = "1";
       setLiveHint("");
@@ -981,6 +999,14 @@ async function startLivePrepareAndPoll(
       videoEl.dataset.livePreparing = "0";
       livePrepareInFlightKey = "";
       return true;
+    }
+    if (
+      prepRes.ok &&
+      prepPayload?.live === false &&
+      prepPayload?.transcode === false
+    ) {
+      fallbackToDirectVideoPlayback(file, videoEl);
+      return false;
     }
 
     stopLiveStatusPolling();
@@ -1009,13 +1035,23 @@ async function startLivePrepareAndPoll(
             if (p && typeof p.catch === "function") p.catch(() => {});
           }
         }
-        if (statusPayload?.live === false) {
+        if (
+          statusPayload?.live === false &&
+          statusPayload?.transcode === false
+        ) {
           fallbackToDirectVideoPlayback(file, videoEl);
         }
       } catch (_) {}
     }, 900);
     return true;
   } catch (_) {
+    const isMov = /\.mov($|\?)/i.test(String(file?.url || ""));
+    if (isMov) {
+      videoEl.dataset.livePreparing = "0";
+      livePrepareInFlightKey = "";
+      setLiveHint("Falló la conversión temporal del MOV");
+      return false;
+    }
     fallbackToDirectVideoPlayback(file, videoEl);
     return true;
   }
@@ -1983,7 +2019,12 @@ function renderViewer() {
     vid.playsInline = true;
     vid.preload = needsWeb ? "none" : "auto";
     vid.dataset.liveWebReady = needsWeb ? "0" : "1";
-    vid.src = f.url;
+    if (needsWeb) {
+      vid.removeAttribute("src");
+      vid.load();
+    } else {
+      vid.src = f.url;
+    }
     if (needsWeb) {
       setLiveHint("Preparando versión optimizada…");
       startLivePrepareAndPoll(f, vid, false).catch(() => {});
@@ -2014,6 +2055,8 @@ function closeViewer() {
   viewerPriorityToken += 1;
   viewerPriorityActive = false;
   suspendThumbLoading(false);
+  livePrepareInFlightKey = "";
+  livePrepareLastStartAt = 0;
 }
 
 function viewerNav(d) {
