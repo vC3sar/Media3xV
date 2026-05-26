@@ -946,6 +946,9 @@ async function boot() {
     if (pathname === "/thumb/image") {
       return thumbHandler.handleImage(req, res, url);
     }
+    if (pathname === "/thumb/web-image") {
+      return thumbHandler.handleWebImage(req, res, url);
+    }
 
     if (pathname === "/live/snapshot") {
       return liveService.handleSnapshot(req, res, url);

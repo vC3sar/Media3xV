@@ -164,7 +164,56 @@ function createThumbHandler(ctx) {
     return true;
   }
 
-  return { handleVideo, handleImage };
+  async function handleWebImage(req, res, url) {
+    const src = String(url.searchParams.get("src") || "").trim();
+    const v = String(url.searchParams.get("v") || "0").trim();
+    if (!src) {
+      res.writeHead(400);
+      res.end("Missing src");
+      return true;
+    }
+    try {
+      const hash = createHash("sha1").update(`web|${src}|${v}`).digest("hex");
+      const outFile = path.resolve(thumbCacheDir, `web_${hash}.jpg`);
+      try {
+        const st = await fs.stat(outFile);
+        if (st.isFile() && st.size > 0) {
+          await serveCachedThumb(res, outFile, "image/jpeg");
+          return true;
+        }
+      } catch {}
+
+      const resolved = resolveSrc(src);
+      if (resolved.errorCode) {
+        res.writeHead(resolved.errorCode);
+        res.end(resolved.errorMessage);
+        return true;
+      }
+
+      await runCommand("ffmpeg", [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        resolved.input,
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        "-f",
+        "mjpeg",
+        outFile,
+      ]);
+      await serveCachedThumb(res, outFile, "image/jpeg");
+    } catch (err) {
+      log(`web image generation failed src=${src} err=${err.message}`);
+      res.writeHead(404);
+      res.end("Web Image unavailable");
+    }
+    return true;
+  }
+
+  return { handleVideo, handleImage, handleWebImage };
 }
 
 export { createThumbHandler };

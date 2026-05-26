@@ -1562,12 +1562,15 @@ function renderViewer() {
     img.removeAttribute('src');
     img.dataset.viewerQuality = 'pending';
     img.dataset.viewerTarget = f.url;
+    const isHeic = f.url.toLowerCase().endsWith('.heic') || f.url.toLowerCase().endsWith('.heif');
+    const targetUrl = isHeic ? `/thumb/web-image?src=${encodeURIComponent(f.url)}` : f.url;
+
     const t512 = f.thumb512Url || f.thumbUrl || '';
     const preferOriginalFirst = useStaticViewportOnIosMobile();
     const promoteOriginal = (attempt = 0) => {
       const src = attempt === 0
-        ? f.url
-        : `${f.url}${f.url.includes('?') ? '&' : '?'}_vr=${Date.now()}_${attempt}`;
+        ? targetUrl
+        : `${targetUrl}${targetUrl.includes('?') ? '&' : '?'}_vr=${Date.now()}_${attempt}`;
       const retries = attempt === 0 ? 2 : 1;
       return window.MediaLoader.loadImageWithRetry(src, { retries, retryDelayMs: 220 }).then(loaded => {
         if (filteredFiles[currentViewerIdx]?.url !== f.url) return false;
@@ -1604,7 +1607,7 @@ function renderViewer() {
       }
       promoteOriginal();
     } else {
-      window.MediaLoader.loadImageWithRetry(t512 || f.url, { retries: 1, retryDelayMs: 120 }).then(loaded => {
+      window.MediaLoader.loadImageWithRetry(t512 || targetUrl, { retries: 1, retryDelayMs: 120 }).then(loaded => {
         if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
         img.style.opacity = '0.85';
         img.src = loaded.src;
