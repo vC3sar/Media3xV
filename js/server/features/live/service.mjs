@@ -139,11 +139,7 @@ function createLiveService(ctx) {
     const baseName = path.basename(absVideoPath, path.extname(absVideoPath));
     const normalizedBaseName = baseName.replace(/\(\d+\)$/i, "");
     const looksLikeIphoneCapture = /^IMG_\d{4,}$/i.test(normalizedBaseName);
-    // Lenient detection: if a still pair exists with same base name, treat it
-    // as live photo even when embedded metadata is missing.
-    if (!hasLiveMetadata && !looksLikeIphoneCapture) {
-      return { stillPath };
-    }
+    if (!hasLiveMetadata && !looksLikeIphoneCapture) return null;
     return { stillPath };
   }
 
@@ -294,7 +290,9 @@ function createLiveService(ctx) {
     }
     try {
       const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
-      if (!liveInfo) {
+      const ext = path.extname(resolved.abs).toLowerCase();
+      const needsWebTranscode = Boolean(liveInfo) || ext === ".mov";
+      if (!needsWebTranscode) {
         await serveFile(req, res, resolved.abs);
         return;
       }
@@ -338,21 +336,31 @@ function createLiveService(ctx) {
     }
     try {
       const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
-      if (!liveInfo) return json(res, 200, { ok: true, live: false });
+      const ext = path.extname(resolved.abs).toLowerCase();
+      const needsWebTranscode = Boolean(liveInfo) || ext === ".mov";
+      if (!needsWebTranscode) {
+        return json(res, 200, { ok: true, live: false, transcode: false, ready: false });
+      }
       const outFile = getLiveWebOutFile(src, v, resolved.abs);
       try {
         const st = await fs.stat(outFile);
         if (st.isFile() && st.size > 0) {
           return json(res, 200, {
             ok: true,
-            live: true,
+            live: Boolean(liveInfo),
+            transcode: true,
             ready: true,
             url: `/live/web-video?src=${encodeURIComponent(src)}&v=${encodeURIComponent(v)}`,
           });
         }
       } catch {}
       ensureLiveWebVideo(src, v, resolved.abs).catch(() => {});
-      return json(res, 202, { ok: true, live: true, ready: false });
+      return json(res, 202, {
+        ok: true,
+        live: Boolean(liveInfo),
+        transcode: true,
+        ready: false,
+      });
     } catch (err) {
       return json(res, 400, { error: err.message || "No se pudo iniciar preparación live" });
     }
@@ -368,14 +376,19 @@ function createLiveService(ctx) {
     }
     try {
       const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
-      if (!liveInfo) return json(res, 200, { ok: true, live: false, ready: false });
+      const ext = path.extname(resolved.abs).toLowerCase();
+      const needsWebTranscode = Boolean(liveInfo) || ext === ".mov";
+      if (!needsWebTranscode) {
+        return json(res, 200, { ok: true, live: false, transcode: false, ready: false });
+      }
       const outFile = getLiveWebOutFile(src, v, resolved.abs);
       try {
         const st = await fs.stat(outFile);
         if (st.isFile() && st.size > 0) {
           return json(res, 200, {
             ok: true,
-            live: true,
+            live: Boolean(liveInfo),
+            transcode: true,
             ready: true,
             url: `/live/web-video?src=${encodeURIComponent(src)}&v=${encodeURIComponent(v)}`,
           });
@@ -383,7 +396,8 @@ function createLiveService(ctx) {
       } catch {}
       return json(res, 200, {
         ok: true,
-        live: true,
+        live: Boolean(liveInfo),
+        transcode: true,
         ready: false,
         preparing: liveWebJobs.has(`${src}|${v}`),
       });

@@ -226,39 +226,6 @@ function normalizeSourceLists(cfg)
 const toUnique = (values) =>
 ```
 
-## File: js/server/features/live/service.mjs
-```javascript
-function createLiveService(ctx)
-⋮----
-function resolveFilesystemMediaSrc(src)
-⋮----
-async function runCommand(command, args, stdoutPipe = false)
-⋮----
-async function probeLivePhotoMetadata(absVideoPath)
-⋮----
-async function findLiveStillPair(absVideoPath)
-⋮----
-// Common duplicate suffixes from mobile/gallery copy operations:
-// IMG_0019(1).MP4 -> try matching still IMG_0019.HEIC
-⋮----
-async function detectLivePhotoFilesystem(absVideoPath)
-⋮----
-// Lenient detection: if a still pair exists with same base name, treat it
-// as live photo even when embedded metadata is missing.
-⋮----
-function getLiveWebOutFile(src, v, absVideoPath)
-⋮----
-async function ensureLiveWebVideo(src, v, absVideoPath)
-⋮----
-async function handleSnapshot(req, res, url)
-⋮----
-async function handleWebVideo(req, res, url)
-⋮----
-async function handlePrepare(res, url)
-⋮----
-async function handleStatus(res, url)
-```
-
 ## File: package.json
 ```json
 {
@@ -298,6 +265,39 @@ async function handleStatus(res, url)
   "detectLivePhotos": true,
   "debug": true
 }
+```
+
+## File: js/server/features/live/service.mjs
+```javascript
+function createLiveService(ctx)
+⋮----
+function resolveFilesystemMediaSrc(src)
+⋮----
+async function runCommand(command, args, stdoutPipe = false)
+⋮----
+async function probeLivePhotoMetadata(absVideoPath)
+⋮----
+async function findLiveStillPair(absVideoPath)
+⋮----
+// Common duplicate suffixes from mobile/gallery copy operations:
+// IMG_0019(1).MP4 -> try matching still IMG_0019.HEIC
+⋮----
+// Fallback for iPhone variants like IMG_E0019.MP4 vs IMG_0019.HEIC
+// or duplicated copies with suffixes.
+⋮----
+async function detectLivePhotoFilesystem(absVideoPath)
+⋮----
+function getLiveWebOutFile(src, v, absVideoPath)
+⋮----
+async function ensureLiveWebVideo(src, v, absVideoPath)
+⋮----
+async function handleSnapshot(req, res, url)
+⋮----
+async function handleWebVideo(req, res, url)
+⋮----
+async function handlePrepare(res, url)
+⋮----
+async function handleStatus(res, url)
 ```
 
 ## File: js/server/features/thumb/handler.mjs
@@ -1096,7 +1096,7 @@ enqueue(task)
 ⋮----
 drain()
 ⋮----
-function videoTaskKey(src, mode = 'thumb')
+function videoTaskKey(src, mode = "thumb")
 ⋮----
 function isFavorite(url)
 ⋮----
@@ -1130,16 +1130,17 @@ async function deleteSelectedFiles()
 ⋮----
 function queueVideoThumbLoad(el, src)
 ⋮----
-onStateChange: state => {
-      el.dataset.videoState = state;
-if (state === 'failed')
-run: async attempt => {
-      const staticThumb = el.dataset.thumb || '';
-if (staticThumb)
+onStateChange: (state) =>
+run: async (attempt) =>
 ⋮----
 function cleanupVideoThumb(el)
 ⋮----
-function requestVideoThumbPreview(el, src, delayMs = VIDEO_THUMB_DEFER_MS, force = false)
+function requestVideoThumbPreview(
+  el,
+  src,
+  delayMs = VIDEO_THUMB_DEFER_MS,
+  force = false,
+)
 ⋮----
 const run = () =>
 ⋮----
@@ -1192,15 +1193,21 @@ async function loadCacheStats()
 ⋮----
 function setViewerVideoFallback(file, visible)
 ⋮----
-function showViewerStaticFromVideo(file, reason = '')
+function showViewerStaticFromVideo(file, reason = "")
 ⋮----
 function nowMs()
 ⋮----
-function setLiveHint(msg = '')
+function setLiveHint(msg = "")
 ⋮----
 function stopLiveStatusPolling()
 ⋮----
-async function startLivePrepareAndPoll(file, videoEl, autoPlayWhenReady = false)
+function fallbackToDirectVideoPlayback(file, videoEl)
+⋮----
+async function startLivePrepareAndPoll(
+  file,
+  videoEl,
+  autoPlayWhenReady = false,
+)
 ⋮----
 function bindViewerVideoEvents(videoEl)
 ⋮----
@@ -1222,20 +1229,27 @@ function startIndexPolling()
 ⋮----
 function updateStats()
 ⋮----
+// ── RENDER CHUNKS ────────────────────────────────────────────
+⋮----
 function renderChunk()
 ⋮----
 function buildGroup(label, files)
 ⋮----
+// ── GRID ─────────────────────────────────────────────────────
 function buildGrid(files)
 ⋮----
 card.onclick = ()
 ⋮----
 function placeholder(type)
 ⋮----
+// ── LIST ─────────────────────────────────────────────────────
 function buildList(files)
 ⋮----
 row.onclick = ()
 ⋮----
+// ── LAZY LOAD ─────────────────────────────────────────────────
+⋮----
+// Infinite scroll
 function resetInfiniteObserver()
 ⋮----
 function resubscribeThumbObservers()
@@ -1246,19 +1260,30 @@ function beginViewerPriorityLoad()
 ⋮----
 function endViewerPriorityLoad(token, preloadNeighbors = true)
 ⋮----
+// Keep grid/background thumbnail loading paused while viewer is open.
+// It will be resumed on closeViewer().
+⋮----
+// ── REORDER ───────────────────────────────────────────────────
 function reorder(srcUrl, dstUrl)
+⋮----
+// ── ZOOM BAR ─────────────────────────────────────────────────
 ⋮----
 function stepZoom(d)
 function setZoomBySlider(v)
 ⋮----
+// ── LAYOUT ────────────────────────────────────────────────────
 function toggleLayout()
+⋮----
+// ── SORT ─────────────────────────────────────────────────────
 ⋮----
 function toggleSortMenu()
 function setSort(el)
 ⋮----
+// ── SIDEBAR NAV ───────────────────────────────────────────────
 function setTypeFilter(type, el)
 function setGroup(g, el)
 ⋮----
+// ── VIEWER ────────────────────────────────────────────────────
 function openViewer(idx)
 ⋮----
 function preloadViewerNeighbors(centerIdx)
@@ -1269,17 +1294,38 @@ function renderViewer()
 ⋮----
 const promoteOriginal = (attempt = 0) =>
 ⋮----
+// iPhone: show a good preview quickly, then upgrade to original.
+⋮----
+img.onerror = () =>
+⋮----
 function closeViewer()
 ⋮----
 function viewerNav(d)
 ⋮----
 function viewerZoom(d)
 ⋮----
+// Wheel zoom in viewer
+⋮----
+// Drag-to-pan in viewer
+⋮----
+// Mobile swipe navigation (images only)
+⋮----
+// Keyboard
+⋮----
+// Close viewer on background click
+⋮----
+// ── TOAST ─────────────────────────────────────────────────────
 function toast(msg, ms = 2200)
+⋮----
+// ── EVENTS ────────────────────────────────────────────────────
+⋮----
+// ── VIRTUAL RENDER + IDB THUMB CACHE ────────────────────────
 ⋮----
 function scheduleIdbSweep()
 ⋮----
 function getThumbNodeState(el)
+⋮----
+status: "idle", // idle|loading|loaded|failed|stale
 ⋮----
 function openThumbDb()
 ⋮----
@@ -1296,14 +1342,22 @@ tx.onerror = ()
 ⋮----
 async function idbSweep(limitBytes = THUMB_MAX_BYTES)
 ⋮----
-function makeThumbCacheKey(file, src, level = 'u')
+function makeThumbCacheKey(file, src, level = "u")
 ⋮----
-async function getThumbObjectUrl(file, src, level = 'u', signal, allowWhenSuspended = false)
+async function getThumbObjectUrl(
+  file,
+  src,
+  level = "u",
+  signal,
+  allowWhenSuspended = false,
+)
 ⋮----
-async function mountThumbWithSwap(el, file, src, level = 'u', blurPx = 0)
+async function mountThumbWithSwap(el, file, src, level = "u", blurPx = 0)
 ⋮----
 img.onload = ()
 img.onerror = ()
+⋮----
+// Commit only after successful decode/load; keep previous image until now.
 ⋮----
 function revokeObjectUrlsInNode(node)
 ⋮----
@@ -1316,6 +1370,8 @@ function hydrateThumbNode(el, file)
 const retryLater = () =>
 ⋮----
 function rehydrateFailedThumbs(container)
+⋮----
+// Non-destructive rehydrate: keep previous visual when available.
 ⋮----
 function getGridColumns()
 ⋮----
@@ -1331,7 +1387,7 @@ const createRowNode = (row, rowIdx) =>
 ⋮----
 card.onclick = (e) =>
 ⋮----
-dl.onclick = ev
+dl.onclick = (ev)
 ⋮----
 el.onclick = (e) =>
 ⋮----

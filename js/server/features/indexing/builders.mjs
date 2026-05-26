@@ -208,15 +208,6 @@ function deriveDateGroup(dateStr, mtimeMs) {
   return "0000-XX";
 }
 
-function normalizeLiveBaseKey(filePathLike) {
-  const rawBase = path.basename(String(filePathLike || ""), path.extname(String(filePathLike || "")));
-  if (!rawBase) return "";
-  let base = rawBase.replace(/\(\d+\)$/i, "").toUpperCase();
-  // iPhone edited/live variants: IMG_E0019 -> IMG_0019
-  base = base.replace(/^IMG_E(\d{4,})$/i, "IMG_$1");
-  return base;
-}
-
 async function buildFilesystemIndex(ctx) {
   const { fs, mediaRoots, detectLivePhotoFilesystem, fastIndexMode, detectLivePhotos } = ctx;
   const files = [];
@@ -225,16 +216,6 @@ async function buildFilesystemIndex(ctx) {
     const entryId = `fs:${rootIdx}`;
     const entryLabel = entryLabelFromFilesystemRoot(mediaRoot);
     const absFiles = await walk(fs, mediaRoot);
-    const stillByLiveKey = new Map();
-    for (const abs of absFiles) {
-      const rel = toPosix(path.relative(mediaRoot, abs));
-      const type = detectType(rel);
-      if (type !== "image") continue;
-      const key = normalizeLiveBaseKey(rel);
-      if (!key) continue;
-      if (!stillByLiveKey.has(key)) stillByLiveKey.set(key, []);
-      stillByLiveKey.get(key).push(abs);
-    }
     for (const abs of absFiles) {
       const rel = toPosix(path.relative(mediaRoot, abs));
       const type = detectType(rel);
@@ -263,16 +244,10 @@ async function buildFilesystemIndex(ctx) {
           await ensureImageThumbFilesystem(ctx, mediaSrc, st.mtimeMs, abs, 512);
         }
       }
-      let liveMeta = null;
-      if (type === "video" && detectLivePhotos) {
-        const liveKey = normalizeLiveBaseKey(rel);
-        const hasPairByName = Boolean(liveKey && stillByLiveKey.has(liveKey));
-        if (hasPairByName) {
-          liveMeta = { stillPath: stillByLiveKey.get(liveKey)?.[0] || null };
-        } else {
-          liveMeta = await detectLivePhotoFilesystem(abs);
-        }
-      }
+      const liveMeta =
+        type === "video" && detectLivePhotos
+          ? await detectLivePhotoFilesystem(abs)
+          : null;
       const thumb128Url =
         type === "image"
           ? `/thumb/image?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}&size=128`

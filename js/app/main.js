@@ -67,6 +67,8 @@ let viewerPriorityActive = false;
 let viewerIsOpen = false;
 let viewerLivePlayBound = false;
 let liveStatusTimer = null;
+let livePrepareInFlightKey = "";
+let livePrepareLastStartAt = 0;
 const appStore = createStore({
   sizeIdx,
   lastDesktopSizeIdx,
@@ -899,6 +901,12 @@ function nowMs() {
   return window.performance && performance.now ? performance.now() : Date.now();
 }
 
+function needsWebVideoTranscode(file) {
+  if (!file || file.type !== "video") return false;
+  if (file.livePhoto?.enabled) return true;
+  return /\.mov($|\?)/i.test(String(file.url || ""));
+}
+
 function setLiveHint(msg = "") {
   const el = document.getElementById("viewerLiveHint");
   if (!el) return;
@@ -917,19 +925,48 @@ function stopLiveStatusPolling() {
   liveStatusTimer = null;
 }
 
+function fallbackToDirectVideoPlayback(file, videoEl) {
+  if (!videoEl || !file?.url) return;
+  stopLiveStatusPolling();
+  setLiveHint("");
+  videoEl.dataset.liveWebReady = "1";
+  videoEl.dataset.livePreparing = "0";
+  livePrepareInFlightKey = "";
+  videoEl.preload = "auto";
+  if (videoEl.src !== file.url) {
+    videoEl.src = file.url;
+    videoEl.load();
+  }
+  const p = videoEl.play();
+  if (p && typeof p.catch === "function") p.catch(() => {});
+}
+
 async function startLivePrepareAndPoll(
   file,
   videoEl,
   autoPlayWhenReady = false,
 ) {
-  if (!file?.livePhoto?.enabled || !file.livePhoto.webVideoUrl) return false;
+  if (!needsWebVideoTranscode(file)) return false;
+  const inFlightNow = videoEl.dataset.livePreparing === "1";
+  const cooldownMs = 2000;
+  if (inFlightNow) return false;
+  if (nowMs() - livePrepareLastStartAt < cooldownMs) return false;
   const versionKey = String(file.url);
+  const requestKey = `${file.url}|${versionKey}`;
+  if (livePrepareInFlightKey && livePrepareInFlightKey === requestKey) return false;
   const prepUrl = `${LIVE_PREPARE_URL}?src=${encodeURIComponent(file.url)}&v=${encodeURIComponent(versionKey)}`;
   const statusUrl = `${LIVE_STATUS_URL}?src=${encodeURIComponent(file.url)}&v=${encodeURIComponent(versionKey)}`;
+  livePrepareInFlightKey = requestKey;
+  livePrepareLastStartAt = nowMs();
+  videoEl.dataset.livePreparing = "1";
   setLiveHint("Generando versión optimizada…");
   try {
     const prepRes = await fetch(prepUrl, { method: "POST" });
     const prepPayload = await prepRes.json().catch(() => ({}));
+    if (prepRes.ok && prepPayload?.live === false) {
+      fallbackToDirectVideoPlayback(file, videoEl);
+      return false;
+    }
     if (prepRes.ok && prepPayload?.ready && prepPayload?.url) {
       videoEl.dataset.liveWebReady = "1";
       setLiveHint("");
@@ -941,6 +978,8 @@ async function startLivePrepareAndPoll(
         const p = videoEl.play();
         if (p && typeof p.catch === "function") p.catch(() => {});
       }
+      videoEl.dataset.livePreparing = "0";
+      livePrepareInFlightKey = "";
       return true;
     }
 
@@ -958,6 +997,8 @@ async function startLivePrepareAndPoll(
         if (statusPayload?.ready && statusPayload?.url) {
           stopLiveStatusPolling();
           videoEl.dataset.liveWebReady = "1";
+          videoEl.dataset.livePreparing = "0";
+          livePrepareInFlightKey = "";
           setLiveHint("");
           if (videoEl.src !== statusPayload.url) {
             videoEl.src = statusPayload.url;
@@ -968,12 +1009,15 @@ async function startLivePrepareAndPoll(
             if (p && typeof p.catch === "function") p.catch(() => {});
           }
         }
+        if (statusPayload?.live === false) {
+          fallbackToDirectVideoPlayback(file, videoEl);
+        }
       } catch (_) {}
     }, 900);
     return true;
   } catch (_) {
-    setLiveHint("");
-    return false;
+    fallbackToDirectVideoPlayback(file, videoEl);
+    return true;
   }
 }
 
@@ -1033,6 +1077,8 @@ function bindViewerVideoEvents(videoEl) {
   const softRecover = (kind) => {
     const curr = filteredFiles[currentViewerIdx];
     if (!curr || curr.type !== "video") return;
+    // For live photos, avoid play/wait loops before the web-ready video is prepared.
+    if (needsWebVideoTranscode(curr) && videoEl.dataset.liveWebReady !== "1") return;
     dbg(`viewer video ${kind}`, { url: curr.url });
     if (viewerVideoPerf && nowMs() - viewerVideoPerf.openAt < 15000) {
       const p = videoEl.play();
@@ -1066,7 +1112,7 @@ function bindViewerVideoEvents(videoEl) {
     videoEl.addEventListener("play", () => {
       const curr = filteredFiles[currentViewerIdx];
       if (!curr || curr.type !== "video") return;
-      if (!curr.livePhoto?.enabled || !curr.livePhoto.webVideoUrl) return;
+      if (!needsWebVideoTranscode(curr)) return;
       if (videoEl.dataset.liveWebReady === "1") return;
       videoEl.pause();
       startLivePrepareAndPoll(curr, videoEl, true).catch(() => {});
@@ -1919,9 +1965,15 @@ function renderViewer() {
     viewerVideoPerf = { openAt: nowMs(), lastPlayingAt: 0 };
     videoLoader.cancelByPrefix("video:thumb:");
     const isLive = Boolean(f.livePhoto?.enabled);
+    const needsWeb = needsWebVideoTranscode(f);
     if (isLive && f.livePhoto?.snapshotUrl) {
       img.style.display = "block";
       img.src = f.livePhoto.snapshotUrl;
+      img.onerror = () => {
+        img.onerror = null;
+        img.style.display = "none";
+        fallbackToDirectVideoPlayback(f, vid);
+      };
       img.style.transform = `translate(${vOffX}px,${vOffY}px) scale(${vZoom})`;
     } else {
       img.style.display = "none";
@@ -1929,10 +1981,10 @@ function renderViewer() {
     vid.style.display = "block";
     vid.loop = true;
     vid.playsInline = true;
-    vid.preload = isLive ? "none" : "auto";
-    vid.dataset.liveWebReady = isLive ? "0" : "1";
+    vid.preload = needsWeb ? "none" : "auto";
+    vid.dataset.liveWebReady = needsWeb ? "0" : "1";
     vid.src = f.url;
-    if (isLive) {
+    if (needsWeb) {
       setLiveHint("Preparando versión optimizada…");
       startLivePrepareAndPoll(f, vid, false).catch(() => {});
     }
