@@ -148,6 +148,13 @@ function parseContentDisposition(value) {
   return out;
 }
 
+function encodePathForUrl(relPath) {
+  return String(relPath || "")
+    .split(/[\\/]+/)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
 async function runWithConcurrency(items, limit, worker) {
   const out = new Array(items.length);
   let idx = 0;
@@ -843,7 +850,7 @@ async function boot() {
         const rel = outPath.slice(mediaRoot.length).replace(/^[\\/]+/, "");
         saved.push({
           name: path.basename(outPath),
-          url: `/media/${targetRootIdx}/${rel.split(path.sep).join("/")}`,
+          url: `/media/${targetRootIdx}/${encodePathForUrl(rel)}`,
           bytes: content.length,
         });
       }

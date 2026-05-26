@@ -24,7 +24,7 @@ function createLiveService(ctx) {
     const slash = relAll.indexOf("/");
     if (slash < 1) return null;
     const rootIdx = Number(relAll.slice(0, slash));
-    const rel = relAll.slice(slash + 1);
+    const rel = decodeURIComponent(relAll.slice(slash + 1));
     const mediaRoot = mediaRoots[rootIdx];
     if (!mediaRoot) return null;
     const abs = path.resolve(mediaRoot, rel);
@@ -291,7 +291,9 @@ function createLiveService(ctx) {
     try {
       const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
       const ext = path.extname(resolved.abs).toLowerCase();
-      const needsWebTranscode = Boolean(liveInfo) || ext === ".mov";
+      const needsWebTranscode =
+        Boolean(liveInfo) ||
+        [".mov", ".mkv", ".avi", ".3gp"].includes(ext);
       if (!needsWebTranscode) {
         await serveFile(req, res, resolved.abs);
         return;
@@ -337,7 +339,9 @@ function createLiveService(ctx) {
     try {
       const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
       const ext = path.extname(resolved.abs).toLowerCase();
-      const needsWebTranscode = Boolean(liveInfo) || ext === ".mov";
+      const needsWebTranscode =
+        Boolean(liveInfo) ||
+        [".mov", ".mkv", ".avi", ".3gp"].includes(ext);
       if (!needsWebTranscode) {
         return json(res, 200, { ok: true, live: false, transcode: false, ready: false });
       }
@@ -377,7 +381,9 @@ function createLiveService(ctx) {
     try {
       const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
       const ext = path.extname(resolved.abs).toLowerCase();
-      const needsWebTranscode = Boolean(liveInfo) || ext === ".mov";
+      const needsWebTranscode =
+        Boolean(liveInfo) ||
+        [".mov", ".mkv", ".avi", ".3gp"].includes(ext);
       if (!needsWebTranscode) {
         return json(res, 200, { ok: true, live: false, transcode: false, ready: false });
       }

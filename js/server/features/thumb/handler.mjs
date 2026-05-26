@@ -26,7 +26,7 @@ function createThumbHandler(ctx) {
       const slash = relAll.indexOf("/");
       if (slash < 1) return { errorCode: 400, errorMessage: "Bad media src" };
       const rootIdx = Number(relAll.slice(0, slash));
-      const rel = relAll.slice(slash + 1);
+      const rel = decodeURIComponent(relAll.slice(slash + 1));
       const mediaRoot = mediaRoots[rootIdx];
       if (!mediaRoot) return { errorCode: 404, errorMessage: "Media root not found" };
       const abs = path.resolve(mediaRoot, rel);

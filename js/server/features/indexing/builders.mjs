@@ -208,6 +208,13 @@ function deriveDateGroup(dateStr, mtimeMs) {
   return "0000-XX";
 }
 
+function encodePathForUrl(relPosixPath) {
+  return String(relPosixPath || "")
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
 async function buildFilesystemIndex(ctx) {
   const { fs, mediaRoots, detectLivePhotoFilesystem, fastIndexMode, detectLivePhotos } = ctx;
   const files = [];
@@ -234,7 +241,7 @@ async function buildFilesystemIndex(ctx) {
       }
       const relDir = toPosix(path.dirname(rel));
       const folderGroup = relDir === "." ? "root" : relDir;
-      const mediaSrc = `/media/${rootIdx}/${rel}`;
+      const mediaSrc = `/media/${rootIdx}/${encodePathForUrl(rel)}`;
       const dims = fastIndexMode
         ? { width: null, height: null }
         : await probeDimensions(abs);
