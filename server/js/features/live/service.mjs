@@ -277,6 +277,8 @@ function createLiveService(ctx) {
   async function handleWebVideo(req, res, url) {
     const src = String(url.searchParams.get("src") || "").trim();
     const v = String(url.searchParams.get("v") || "0").trim();
+    const forceTranscode =
+      String(url.searchParams.get("force") || "0").trim() === "1";
     if (!src) {
       res.writeHead(400);
       res.end("Missing src");
@@ -293,7 +295,8 @@ function createLiveService(ctx) {
       const ext = path.extname(resolved.abs).toLowerCase();
       const needsWebTranscode =
         Boolean(liveInfo) ||
-        [".mov", ".mkv", ".avi", ".3gp"].includes(ext);
+        [".mov", ".mkv", ".avi", ".3gp"].includes(ext) ||
+        forceTranscode;
       if (!needsWebTranscode) {
         await serveFile(req, res, resolved.abs);
         return;
@@ -331,6 +334,8 @@ function createLiveService(ctx) {
   async function handlePrepare(res, url) {
     const src = String(url.searchParams.get("src") || "").trim();
     const v = String(url.searchParams.get("v") || "0").trim();
+    const forceTranscode =
+      String(url.searchParams.get("force") || "0").trim() === "1";
     if (!src) return json(res, 400, { error: "Missing src" });
     const resolved = resolveFilesystemMediaSrc(src);
     if (!resolved) {
@@ -341,7 +346,8 @@ function createLiveService(ctx) {
       const ext = path.extname(resolved.abs).toLowerCase();
       const needsWebTranscode =
         Boolean(liveInfo) ||
-        [".mov", ".mkv", ".avi", ".3gp"].includes(ext);
+        [".mov", ".mkv", ".avi", ".3gp"].includes(ext) ||
+        forceTranscode;
       if (!needsWebTranscode) {
         return json(res, 200, { ok: true, live: false, transcode: false, ready: false });
       }
@@ -354,7 +360,7 @@ function createLiveService(ctx) {
             live: Boolean(liveInfo),
             transcode: true,
             ready: true,
-            url: `/live/web-video?src=${encodeURIComponent(src)}&v=${encodeURIComponent(v)}`,
+            url: `/live/web-video?src=${encodeURIComponent(src)}&v=${encodeURIComponent(v)}&force=${forceTranscode ? "1" : "0"}`,
           });
         }
       } catch {}
@@ -373,6 +379,8 @@ function createLiveService(ctx) {
   async function handleStatus(res, url) {
     const src = String(url.searchParams.get("src") || "").trim();
     const v = String(url.searchParams.get("v") || "0").trim();
+    const forceTranscode =
+      String(url.searchParams.get("force") || "0").trim() === "1";
     if (!src) return json(res, 400, { error: "Missing src" });
     const resolved = resolveFilesystemMediaSrc(src);
     if (!resolved) {
@@ -383,7 +391,8 @@ function createLiveService(ctx) {
       const ext = path.extname(resolved.abs).toLowerCase();
       const needsWebTranscode =
         Boolean(liveInfo) ||
-        [".mov", ".mkv", ".avi", ".3gp"].includes(ext);
+        [".mov", ".mkv", ".avi", ".3gp"].includes(ext) ||
+        forceTranscode;
       if (!needsWebTranscode) {
         return json(res, 200, { ok: true, live: false, transcode: false, ready: false });
       }
@@ -396,7 +405,7 @@ function createLiveService(ctx) {
             live: Boolean(liveInfo),
             transcode: true,
             ready: true,
-            url: `/live/web-video?src=${encodeURIComponent(src)}&v=${encodeURIComponent(v)}`,
+            url: `/live/web-video?src=${encodeURIComponent(src)}&v=${encodeURIComponent(v)}&force=${forceTranscode ? "1" : "0"}`,
           });
         }
       } catch {}

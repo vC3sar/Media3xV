@@ -7,20 +7,23 @@ import crypto from "node:crypto";
 import cluster from "node:cluster";
 import os from "node:os";
 import { URL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
   defaults,
   normalizeSourceLists,
   readConfig as readConfigFile,
   writeConfig as writeConfigFile,
-} from "./js/server/features/config/repository.mjs";
-import { buildIndexPayloadFactory } from "./js/server/features/indexing/builders.mjs";
-import { createCacheService } from "./js/server/features/cache/service.mjs";
-import { createThumbHandler } from "./js/server/features/thumb/handler.mjs";
-import { createLiveService } from "./js/server/features/live/service.mjs";
-import { detectType, toPosix } from "./js/server/shared/media-utils.mjs";
+} from "./js/features/config/repository.mjs";
+import { buildIndexPayloadFactory } from "./js/features/indexing/builders.mjs";
+import { createCacheService } from "./js/features/cache/service.mjs";
+import { createThumbHandler } from "./js/features/thumb/handler.mjs";
+import { createLiveService } from "./js/features/live/service.mjs";
+import { detectType, toPosix } from "./js/shared/media-utils.mjs";
 
-const ROOT_DIR = path.resolve(".");
-const CONFIG_FILE = path.resolve(ROOT_DIR, "config.json");
+const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(SERVER_DIR, "..");
+const CLIENT_DIR = path.resolve(PROJECT_ROOT, "client");
+const CONFIG_FILE = path.resolve(SERVER_DIR, "config.json");
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -187,8 +190,8 @@ async function boot() {
     process.env.MEDIA_INDEX_FILE || cfg.mediaIndexFile,
   );
   const INDEX_TMP = `${INDEX_FILE}.tmp`;
-  const THUMB_CACHE_DIR = path.resolve(ROOT_DIR, ".thumb-cache");
-  const LIVE_TEMP_DIR = path.resolve(ROOT_DIR, ".temp_livephotos");
+  const THUMB_CACHE_DIR = path.resolve(PROJECT_ROOT, ".thumb-cache");
+  const LIVE_TEMP_DIR = path.resolve(PROJECT_ROOT, ".temp_livephotos");
   const LIVE_SNAPSHOT_DIR = path.resolve(LIVE_TEMP_DIR, "snapshots");
   const LIVE_WEB_DIR = path.resolve(LIVE_TEMP_DIR, "web");
   const WATCH_DEBOUNCE_MS = Number(
@@ -1025,11 +1028,11 @@ async function boot() {
     }
 
     if (pathname.startsWith("/js/")) {
-      return serveFile(req, res, path.resolve(ROOT_DIR, `.${pathname}`));
+      return serveFile(req, res, path.resolve(CLIENT_DIR, `.${pathname}`));
     }
 
     if (pathname === "/" || pathname === "/index.html") {
-      return serveFile(req, res, path.resolve(ROOT_DIR, "index.html"));
+      return serveFile(req, res, path.resolve(CLIENT_DIR, "index.html"));
     }
 
     res.writeHead(404);

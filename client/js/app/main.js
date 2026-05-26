@@ -954,8 +954,10 @@ async function startLivePrepareAndPoll(
   file,
   videoEl,
   autoPlayWhenReady = false,
+  opts = {},
 ) {
-  if (!needsWebVideoTranscode(file)) return false;
+  const forceTranscode = Boolean(opts?.forceTranscode);
+  if (!forceTranscode && !needsWebVideoTranscode(file)) return false;
   const inFlightNow = videoEl.dataset.livePreparing === "1";
   const cooldownMs = 2000;
   if (inFlightNow) return false;
@@ -963,22 +965,22 @@ async function startLivePrepareAndPoll(
     setTimeout(() => {
       if (filteredFiles[currentViewerIdx]?.url !== file.url) return;
       if (videoEl.dataset.liveWebReady === "1") return;
-      startLivePrepareAndPoll(file, videoEl, autoPlayWhenReady).catch(() => {});
+      startLivePrepareAndPoll(file, videoEl, autoPlayWhenReady, opts).catch(() => {});
     }, Math.max(350, cooldownMs - Math.floor(nowMs() - livePrepareLastStartAt)));
     return false;
   }
   const versionKey = String(file.url);
-  const requestKey = `${file.url}|${versionKey}`;
+  const requestKey = `${file.url}|${versionKey}|${forceTranscode ? "1" : "0"}`;
   if (livePrepareInFlightKey && livePrepareInFlightKey === requestKey) {
     setTimeout(() => {
       if (filteredFiles[currentViewerIdx]?.url !== file.url) return;
       if (videoEl.dataset.liveWebReady === "1") return;
-      startLivePrepareAndPoll(file, videoEl, autoPlayWhenReady).catch(() => {});
+      startLivePrepareAndPoll(file, videoEl, autoPlayWhenReady, opts).catch(() => {});
     }, 500);
     return false;
   }
-  const prepUrl = `${LIVE_PREPARE_URL}?src=${encodeURIComponent(file.url)}&v=${encodeURIComponent(versionKey)}`;
-  const statusUrl = `${LIVE_STATUS_URL}?src=${encodeURIComponent(file.url)}&v=${encodeURIComponent(versionKey)}`;
+  const prepUrl = `${LIVE_PREPARE_URL}?src=${encodeURIComponent(file.url)}&v=${encodeURIComponent(versionKey)}&force=${forceTranscode ? "1" : "0"}`;
+  const statusUrl = `${LIVE_STATUS_URL}?src=${encodeURIComponent(file.url)}&v=${encodeURIComponent(versionKey)}&force=${forceTranscode ? "1" : "0"}`;
   livePrepareInFlightKey = requestKey;
   livePrepareLastStartAt = nowMs();
   videoEl.dataset.livePreparing = "1";
@@ -1131,6 +1133,17 @@ function bindViewerVideoEvents(videoEl) {
   videoEl.addEventListener("error", () => {
     const curr = filteredFiles[currentViewerIdx];
     if (!curr || curr.type !== "video") return;
+    if (
+      !needsWebVideoTranscode(curr) &&
+      videoEl.dataset.forceTranscodeTried !== "1"
+    ) {
+      videoEl.dataset.forceTranscodeTried = "1";
+      setLiveHint("Codec no compatible. Generando MP4 temporal…");
+      startLivePrepareAndPoll(curr, videoEl, true, {
+        forceTranscode: true,
+      }).catch(() => {});
+      return;
+    }
     if (showViewerStaticFromVideo(curr, "decode-error")) {
       toast(
         "Mostrando vista estática (Video no compatible). Descarga el video para verlo.",
@@ -1795,6 +1808,7 @@ function renderViewer() {
     vid.style.display = "block";
     vid.loop = true;
     vid.playsInline = true;
+    vid.dataset.forceTranscodeTried = "0";
     vid.preload = needsWeb ? "none" : "auto";
     vid.dataset.liveWebReady = needsWeb ? "0" : "1";
     if (needsWeb) {

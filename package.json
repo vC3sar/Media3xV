@@ -3,11 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.mjs",
-    "start:cluster": "node server.mjs --cluster",
-    "dev": "nodemon --watch server.mjs --ignore '**/.thumb-cache/**' --ignore '**/.temp_livephotos/**' --ignore '**/.git/**' --ignore '**/node_modules/**' server.mjs"
+    "start": "electron client/electron/main.mjs",
+    "dev": "electron client/electron/main.mjs",
+    "start:server": "node server/server.mjs",
+    "start:cluster": "node server/server.mjs --cluster"
   },
   "devDependencies": {
+    "electron": "^33.3.1",
     "nodemon": "^3.1.10"
   }
 }
