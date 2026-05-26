@@ -752,12 +752,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
 
 <!-- CONFIG MODAL -->
 <div id="cfgModal" style="display:none;position:fixed;inset:0;z-index:85;background:rgba(0,0,0,.65);backdrop-filter:blur(2px);">
-  <div style="max-width:680px;margin:8vh auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+  <div style="max-width:680px;max-height:84vh;margin:8vh auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);">
       <strong style="font-size:13px;">Configuración de Sources</strong>
       <button class="tbtn" onclick="closeConfigModal()">Cerrar</button>
     </div>
-    <div style="padding:14px;display:flex;flex-direction:column;gap:10px;">
+    <div style="padding:14px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;flex:1;min-height:0;">
       <label style="font-size:12px;color:var(--muted-l);">Modo activo</label>
       <select id="cfgSourceMode" class="tbtn" style="justify-content:flex-start;width:220px;">
         <option value="filesystem">filesystem (mediaRoots)</option>
@@ -770,6 +770,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
 
       <label style="font-size:12px;color:var(--muted-l);">autoindexRootUrls (uno por línea)</label>
       <textarea id="cfgAutoRoots" style="width:100%;min-height:92px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px;font-family:var(--mono);font-size:12px;"></textarea>
+
+      <label style="font-size:12px;color:var(--muted-l);">remoteUrl Server</label>
+      <input id="cfgRemoteUrl" type="text" placeholder="http://192.168.1.125:3000" style="width:100%;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px;font-family:var(--mono);font-size:12px;">
 
       <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">
         <button class="tbtn" onclick="loadConfigModalData()">Recargar</button>
@@ -785,6 +788,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
         <div>.thumb-cache: <span id="cacheThumbSize" style="font-family:var(--mono);">-</span></div>
         <div>.temp_livephotos: <span id="cacheLiveSize" style="font-family:var(--mono);">-</span></div>
         <div>Total: <span id="cacheTotalSize" style="font-family:var(--mono);">-</span></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;justify-content:flex-start;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--border);">
+        <button class="tbtn" onclick="loadPartitionsList()">Cargar particiones</button>
+      </div>
+      <div id="partitionsBox" style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--card);display:flex;flex-direction:column;gap:4px;padding:6px;flex-shrink:0;">
+        <div style="font-size:11px;color:var(--muted);">Sin datos. Presiona "Cargar particiones".</div>
       </div>
       <div style="font-size:11px;color:var(--muted);">Nota: mixed usa ambas listas; filesystem/autoindex usan solo su lista. Después de guardar, reinicia el servidor para aplicar cambios.</div>
     </div>

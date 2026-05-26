@@ -13,10 +13,13 @@ function createLiveService(ctx) {
     serveFile,
     json,
     log,
+    execFfprobe,
+    execFfmpegTranscode,
   } = ctx;
 
   const liveProbeCache = new Map();
   const liveWebJobs = new Map();
+  const liveWebJobState = new Map();
 
   function resolveFilesystemMediaSrc(src) {
     if (!src.startsWith("/media/")) return null;
@@ -33,6 +36,15 @@ function createLiveService(ctx) {
   }
 
   async function runCommand(command, args, stdoutPipe = false) {
+    if (command === "ffprobe" && typeof execFfprobe === "function") {
+      return execFfprobe(args, `ffprobe:${createHash("sha1").update(args.join("|")).digest("hex").slice(0, 12)}`);
+    }
+    if (command === "ffmpeg" && typeof execFfmpegTranscode === "function") {
+      return execFfmpegTranscode(
+        args,
+        `ffmpeg:${createHash("sha1").update(args.join("|")).digest("hex").slice(0, 12)}`,
+      );
+    }
     return new Promise((resolve, reject) => {
       const child = spawn(command, args, {
         stdio: ["ignore", stdoutPipe ? "pipe" : "ignore", "pipe"],
@@ -53,6 +65,53 @@ function createLiveService(ctx) {
         else reject(new Error(stderr.trim() || `${command} exit ${code}`));
       });
     });
+  }
+
+  async function probeMediaStreams(absPath) {
+    const out = await runCommand(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-print_format",
+        "json",
+        "-show_streams",
+        absPath,
+      ],
+      true,
+    ).catch(() => "{}");
+    try {
+      const parsed = JSON.parse(out || "{}");
+      const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
+      const videoStream = streams.find((s) => s?.codec_type === "video") || null;
+      const audioStream = streams.find((s) => s?.codec_type === "audio") || null;
+      const hasVideo = Boolean(videoStream);
+      const hasAudio = Boolean(audioStream);
+      return {
+        hasVideo,
+        hasAudio,
+        videoCodec: String(videoStream?.codec_name || "").toLowerCase(),
+        videoPixelFormat: String(videoStream?.pix_fmt || "").toLowerCase(),
+        audioCodec: String(audioStream?.codec_name || "").toLowerCase(),
+      };
+    } catch {
+      return {
+        hasVideo: false,
+        hasAudio: false,
+        videoCodec: "",
+        videoPixelFormat: "",
+        audioCodec: "",
+      };
+    }
+  }
+
+  function isWebFriendlyMp4(streams) {
+    const videoCodec = String(streams?.videoCodec || "");
+    const pixFmt = String(streams?.videoPixelFormat || "");
+    const audioCodec = String(streams?.audioCodec || "");
+    const videoOk = videoCodec === "h264" && (!pixFmt || pixFmt === "yuv420p");
+    const audioOk = !streams?.hasAudio || ["aac", "mp3", "mp4a"].includes(audioCodec);
+    return videoOk && audioOk;
   }
 
   async function probeLivePhotoMetadata(absVideoPath) {
@@ -143,8 +202,20 @@ function createLiveService(ctx) {
     return { stillPath };
   }
 
-  function getLiveWebOutFile(src, v, absVideoPath) {
-    const hash = createHash("sha1").update(`${src}|${v}|web`).digest("hex");
+  async function getSourceVersionKey(absVideoPath, vHint) {
+    if (String(vHint || "").trim()) return String(vHint).trim();
+    try {
+      const st = await fs.stat(absVideoPath);
+      return `${Math.floor(st.mtimeMs)}_${st.size}`;
+    } catch {
+      return "0";
+    }
+  }
+
+  function getLiveWebOutFile(src, versionKey, absVideoPath) {
+    const hash = createHash("sha1")
+      .update(`${src}|${versionKey}|web-v2`)
+      .digest("hex");
     return path.resolve(
       liveWebDir,
       `${path.basename(absVideoPath, path.extname(absVideoPath))}_web_${hash.slice(0, 8)}.mp4`,
@@ -152,27 +223,53 @@ function createLiveService(ctx) {
   }
 
   async function ensureLiveWebVideo(src, v, absVideoPath) {
-    const outFile = getLiveWebOutFile(src, v, absVideoPath);
+    const versionKey = await getSourceVersionKey(absVideoPath, v);
+    const outFile = getLiveWebOutFile(src, versionKey, absVideoPath);
     try {
       const st = await fs.stat(outFile);
-      if (st.isFile() && st.size > 0) return outFile;
+      if (st.isFile() && st.size > 0) {
+        liveWebJobState.set(`${src}|${versionKey}`, {
+          status: "ready",
+          updatedAt: Date.now(),
+          outFile,
+          error: "",
+        });
+        return outFile;
+      }
     } catch {}
 
-    const key = `${src}|${v}`;
+    const key = `${src}|${versionKey}`;
+    const prevState = liveWebJobState.get(key);
+    if (prevState?.status === "error") {
+      // Throttle repeated hard-fail retries for the same source/version.
+      const elapsed = Date.now() - Number(prevState.updatedAt || 0);
+      if (elapsed < 15000) {
+        throw new Error(prevState.error || "Transcode failed recently");
+      }
+    }
+
     if (!liveWebJobs.has(key)) {
+      liveWebJobState.set(key, {
+        status: "running",
+        updatedAt: Date.now(),
+        outFile,
+        error: "",
+      });
       liveWebJobs.set(
         key,
         (async () => {
+          const streams = await probeMediaStreams(absVideoPath);
+          if (!streams.hasVideo) {
+            throw new Error("Source has no video stream");
+          }
+          const mapArgs = streams.hasAudio ? ["-map", "0:v:0", "-map", "0:a:0"] : ["-map", "0:v:0"];
           await runCommand("ffmpeg", [
             "-hide_banner",
             "-loglevel",
             "error",
             "-i",
             absVideoPath,
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a?",
+            ...mapArgs,
             "-c:v",
             "libx264",
             "-preset",
@@ -181,18 +278,39 @@ function createLiveService(ctx) {
             "18",
             "-pix_fmt",
             "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            "-ac",
-            "2",
+            ...(streams.hasAudio
+              ? ["-c:a", "aac", "-b:a", "160k", "-ac", "2"]
+              : ["-an"]),
+            "-sn",
+            "-map_metadata",
+            "-1",
             "-movflags",
             "+faststart",
+            "-max_muxing_queue_size",
+            "1024",
+            "-y",
             outFile,
           ]);
+          const outSt = await fs.stat(outFile);
+          if (!outSt.isFile() || outSt.size <= 0) {
+            throw new Error("Empty transcoded file");
+          }
+          liveWebJobState.set(key, {
+            status: "ready",
+            updatedAt: Date.now(),
+            outFile,
+            error: "",
+          });
           return outFile;
-        })().finally(() => {
+        })().catch((err) => {
+          liveWebJobState.set(key, {
+            status: "error",
+            updatedAt: Date.now(),
+            outFile,
+            error: err?.message || "Transcode failed",
+          });
+          throw err;
+        }).finally(() => {
           liveWebJobs.delete(key);
         }),
       );
@@ -293,15 +411,20 @@ function createLiveService(ctx) {
     try {
       const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
       const ext = path.extname(resolved.abs).toLowerCase();
+      const streams = await probeMediaStreams(resolved.abs);
+      const mp4NeedsTranscode =
+        ext === ".mp4" && streams.hasVideo && !isWebFriendlyMp4(streams);
       const needsWebTranscode =
         Boolean(liveInfo) ||
         [".mov", ".mkv", ".avi", ".3gp"].includes(ext) ||
+        mp4NeedsTranscode ||
         forceTranscode;
       if (!needsWebTranscode) {
         await serveFile(req, res, resolved.abs);
         return;
       }
-      const outFile = getLiveWebOutFile(src, v, resolved.abs);
+      const versionKey = await getSourceVersionKey(resolved.abs, v);
+      const outFile = getLiveWebOutFile(src, versionKey, resolved.abs);
       try {
         const st = await fs.stat(outFile);
         if (st.isFile() && st.size > 0) {
@@ -315,7 +438,7 @@ function createLiveService(ctx) {
           return;
         }
       } catch {}
-      await ensureLiveWebVideo(src, v, resolved.abs);
+      await ensureLiveWebVideo(src, versionKey, resolved.abs);
 
       const st = await fs.stat(outFile);
       res.writeHead(200, {
@@ -344,14 +467,19 @@ function createLiveService(ctx) {
     try {
       const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
       const ext = path.extname(resolved.abs).toLowerCase();
+      const streams = await probeMediaStreams(resolved.abs);
+      const mp4NeedsTranscode =
+        ext === ".mp4" && streams.hasVideo && !isWebFriendlyMp4(streams);
       const needsWebTranscode =
         Boolean(liveInfo) ||
         [".mov", ".mkv", ".avi", ".3gp"].includes(ext) ||
+        mp4NeedsTranscode ||
         forceTranscode;
       if (!needsWebTranscode) {
         return json(res, 200, { ok: true, live: false, transcode: false, ready: false });
       }
-      const outFile = getLiveWebOutFile(src, v, resolved.abs);
+      const versionKey = await getSourceVersionKey(resolved.abs, v);
+      const outFile = getLiveWebOutFile(src, versionKey, resolved.abs);
       try {
         const st = await fs.stat(outFile);
         if (st.isFile() && st.size > 0) {
@@ -364,12 +492,13 @@ function createLiveService(ctx) {
           });
         }
       } catch {}
-      ensureLiveWebVideo(src, v, resolved.abs).catch(() => {});
+      ensureLiveWebVideo(src, versionKey, resolved.abs).catch(() => {});
       return json(res, 202, {
         ok: true,
         live: Boolean(liveInfo),
         transcode: true,
         ready: false,
+        preparing: liveWebJobs.has(`${src}|${versionKey}`),
       });
     } catch (err) {
       return json(res, 400, { error: err.message || "No se pudo iniciar preparación live" });
@@ -389,14 +518,19 @@ function createLiveService(ctx) {
     try {
       const liveInfo = await detectLivePhotoFilesystem(resolved.abs);
       const ext = path.extname(resolved.abs).toLowerCase();
+      const streams = await probeMediaStreams(resolved.abs);
+      const mp4NeedsTranscode =
+        ext === ".mp4" && streams.hasVideo && !isWebFriendlyMp4(streams);
       const needsWebTranscode =
         Boolean(liveInfo) ||
         [".mov", ".mkv", ".avi", ".3gp"].includes(ext) ||
+        mp4NeedsTranscode ||
         forceTranscode;
       if (!needsWebTranscode) {
         return json(res, 200, { ok: true, live: false, transcode: false, ready: false });
       }
-      const outFile = getLiveWebOutFile(src, v, resolved.abs);
+      const versionKey = await getSourceVersionKey(resolved.abs, v);
+      const outFile = getLiveWebOutFile(src, versionKey, resolved.abs);
       try {
         const st = await fs.stat(outFile);
         if (st.isFile() && st.size > 0) {
@@ -409,12 +543,14 @@ function createLiveService(ctx) {
           });
         }
       } catch {}
+      const state = liveWebJobState.get(`${src}|${versionKey}`) || null;
       return json(res, 200, {
         ok: true,
         live: Boolean(liveInfo),
         transcode: true,
         ready: false,
-        preparing: liveWebJobs.has(`${src}|${v}`),
+        preparing: liveWebJobs.has(`${src}|${versionKey}`),
+        error: state?.status === "error" ? state.error : "",
       });
     } catch (err) {
       return json(res, 400, { error: err.message || "No se pudo consultar estado live" });

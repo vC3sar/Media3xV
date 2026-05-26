@@ -15,6 +15,8 @@ const defaults = {
   fastIndexMode: false,
   detectLivePhotos: true,
   debug: false,
+  apiToken: "",
+  clientHttpEnabled: true,
 };
 
 async function readConfig(fs, configFile) {

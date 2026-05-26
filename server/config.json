@@ -14,6 +14,7 @@
   "watchDebounceMs": 1200,
   "filesystemRefreshMs": 15000,
   "autoindexRefreshMs": 20000,
+  "clientHttpEnabled": true,
   "fastIndexMode": true,
   "detectLivePhotos": true,
   "debug": true

@@ -32,10 +32,41 @@ import { applyFiltersUseCase } from "./application/apply-filters.usecase.js";
 const RUNTIME_BASE_URL = String(window.media3xvRuntime?.baseUrl || "")
   .trim()
   .replace(/\/+$/, "");
-function toRemoteUrl(value) {
-  const raw = String(value || "").trim();
+function normalizeUrlPath(rawUrl) {
+  const raw = String(rawUrl || "").trim();
   if (!raw) return "";
-  if (/^https?:\/\//i.test(raw)) return raw;
+  const match = raw.match(/^([^?#]*)(\?[^#]*)?(#.*)?$/);
+  if (!match) return raw;
+  const pathPart = String(match[1] || "");
+  const queryPart = String(match[2] || "");
+  const hashPart = String(match[3] || "");
+  const normalizedPath = pathPart
+    .split("/")
+    .map((seg) => {
+      if (!seg) return seg;
+      try {
+        return encodeURIComponent(decodeURIComponent(seg));
+      } catch {
+        return encodeURIComponent(seg);
+      }
+    })
+    .join("/");
+  const normalizedHash = hashPart ? hashPart.replace(/#/g, "%23") : "";
+  return `${normalizedPath}${queryPart}${normalizedHash}`;
+}
+function toRemoteUrl(value) {
+  const rawInput = String(value || "").trim();
+  if (!rawInput) return "";
+  if (/^https?:\/\//i.test(rawInput)) {
+    try {
+      const u = new URL(rawInput);
+      u.pathname = normalizeUrlPath(u.pathname);
+      return u.toString();
+    } catch {
+      return rawInput;
+    }
+  }
+  const raw = normalizeUrlPath(rawInput);
   if (raw.startsWith("/") && RUNTIME_BASE_URL) return `${RUNTIME_BASE_URL}${raw}`;
   return raw;
 }
@@ -979,7 +1010,12 @@ async function loadPartitionsList() {
 function needsWebVideoTranscode(file) {
   if (!file || file.type !== "video") return false;
   if (file.livePhoto?.enabled) return true;
-  return /\.mov($|\?)/i.test(String(file.url || ""));
+  const rawUrl = String(file.url || "");
+  if (/\.mov($|\?)/i.test(rawUrl)) return true;
+  const isHttpRuntime = String(window.media3xvRuntime?.platform || "")
+    .toLowerCase() === "http";
+  if (isHttpRuntime && /\.mp4($|\?)/i.test(rawUrl)) return true;
+  return false;
 }
 
 function setLiveHint(msg = "") {

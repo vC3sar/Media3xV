@@ -2,6 +2,7 @@
 import http from "node:http";
 import { promises as fs } from "node:fs";
 import { createReadStream } from "node:fs";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import crypto from "node:crypto";
 import cluster from "node:cluster";
@@ -18,11 +19,13 @@ import { buildIndexPayloadFactory } from "./js/features/indexing/builders.mjs";
 import { createCacheService } from "./js/features/cache/service.mjs";
 import { createThumbHandler } from "./js/features/thumb/handler.mjs";
 import { createLiveService } from "./js/features/live/service.mjs";
+import { createTaskScheduler } from "./js/shared/task-scheduler.mjs";
 import { detectType, toPosix } from "./js/shared/media-utils.mjs";
+import { createClientHttpModule } from "./client-http/index.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SERVER_DIR, "..");
-const CLIENT_DIR = path.resolve(PROJECT_ROOT, "client");
+const CLIENT_HTTP_DIR = path.resolve(SERVER_DIR, "client-http");
 const CONFIG_FILE = path.resolve(SERVER_DIR, "config.json");
 
 const contentTypes = {
@@ -63,6 +66,9 @@ const state = {
   scanPromise: null,
   watchTimer: null,
   fsQuickFingerprint: null,
+  partitions: {},
+  lastScanDurationMs: 0,
+  lastScanAt: null,
 };
 
 async function readConfig() {
@@ -215,6 +221,30 @@ async function boot() {
     true,
   );
   const DEBUG = toBool(process.env.DEBUG ?? cfg.debug, false);
+  const API_TOKEN = String(process.env.API_TOKEN || cfg.apiToken || "").trim();
+  const CLIENT_HTTP_ENABLED = toBool(
+    process.env.CLIENT_HTTP_ENABLED ?? cfg.clientHttpEnabled,
+    true,
+  );
+  const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
+  const RATE_LIMIT_MAX_MUTATIONS = Number(
+    process.env.RATE_LIMIT_MAX_MUTATIONS || 90,
+  );
+  const rateLimitByIp = new Map();
+  const metrics = {
+    requestsTotal: 0,
+    mutationDeniedAuth: 0,
+    mutationDeniedRate: 0,
+    scansStarted: 0,
+    scansCompleted: 0,
+    scansFailed: 0,
+  };
+  const forcedReindexPartitions = new Set();
+  const scheduler = createTaskScheduler({
+    ffprobe: Number(process.env.MAX_FFPROBE_JOBS || 2),
+    thumb: Number(process.env.MAX_FFMPEG_THUMB_JOBS || 2),
+    transcode: Number(process.env.MAX_FFMPEG_TRANSCODE_JOBS || 1),
+  });
 
   const log = (...args) => {
     if (!DEBUG) return;
@@ -227,6 +257,45 @@ async function boot() {
     thumbCacheDir: THUMB_CACHE_DIR,
     liveTempDir: LIVE_TEMP_DIR,
   });
+
+  function getClientIp(req) {
+    const xfwd = String(req.headers["x-forwarded-for"] || "").trim();
+    if (xfwd) return xfwd.split(",")[0].trim();
+    const xreal = String(req.headers["x-real-ip"] || "").trim();
+    if (xreal) return xreal;
+    return String(req.socket?.remoteAddress || "unknown");
+  }
+
+  function isMutationPath(pathname, method) {
+    if (method !== "POST") return false;
+    return (
+      pathname === "/api/config" ||
+      pathname === "/api/cache-cleanup" ||
+      pathname === "/api/upload-media" ||
+      pathname === "/api/delete-media" ||
+      pathname === "/api/reindex-partition"
+    );
+  }
+
+  function checkRateLimit(ip) {
+    const now = Date.now();
+    const row = rateLimitByIp.get(ip) || { windowStart: now, count: 0 };
+    if (now - row.windowStart >= RATE_LIMIT_WINDOW_MS) {
+      row.windowStart = now;
+      row.count = 0;
+    }
+    row.count += 1;
+    rateLimitByIp.set(ip, row);
+    return row.count <= RATE_LIMIT_MAX_MUTATIONS;
+  }
+
+  function checkAuth(req) {
+    if (!API_TOKEN) return true;
+    const got =
+      String(req.headers["x-api-token"] || "").trim() ||
+      String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+    return got && got === API_TOKEN;
+  }
 
   if (!["filesystem", "autoindex", "mixed"].includes(SOURCE_MODE)) {
     throw new Error(
@@ -397,6 +466,50 @@ async function boot() {
     serveFile,
     json,
     log,
+    execFfprobe: (args, dedupeKey = "") =>
+      scheduler.enqueue(
+        "ffprobe",
+        () =>
+          new Promise((resolve, reject) => {
+            const child = spawn("ffprobe", args, {
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+            let out = "";
+            let stderr = "";
+            child.stdout.on("data", (d) => {
+              out += String(d || "");
+            });
+            child.stderr.on("data", (d) => {
+              stderr += String(d || "");
+            });
+            child.on("error", reject);
+            child.on("close", (code) => {
+              if (code === 0) resolve(out);
+              else reject(new Error(stderr.trim() || `ffprobe exit ${code}`));
+            });
+          }),
+        dedupeKey,
+      ),
+    execFfmpegTranscode: (args, dedupeKey = "") =>
+      scheduler.enqueue(
+        "transcode",
+        () =>
+          new Promise((resolve, reject) => {
+            const child = spawn("ffmpeg", args, {
+              stdio: ["ignore", "ignore", "pipe"],
+            });
+            let stderr = "";
+            child.stderr.on("data", (d) => {
+              stderr += String(d || "");
+            });
+            child.on("error", reject);
+            child.on("close", (code) => {
+              if (code === 0) resolve("");
+              else reject(new Error(stderr.trim() || `ffmpeg exit ${code}`));
+            });
+          }),
+        dedupeKey,
+      ),
   });
   const thumbHandler = createThumbHandler({
     fs,
@@ -406,6 +519,33 @@ async function boot() {
     mediaRoots: MEDIA_ROOTS,
     thumbCacheDir: THUMB_CACHE_DIR,
     log,
+    execFfmpegThumb: (args, dedupeKey = "") =>
+      scheduler.enqueue(
+        "thumb",
+        () =>
+          new Promise((resolve, reject) => {
+            const child = spawn("ffmpeg", args, {
+              stdio: ["ignore", "ignore", "pipe"],
+            });
+            let stderr = "";
+            child.stderr.on("data", (d) => {
+              stderr += String(d || "");
+            });
+            child.on("error", reject);
+            child.on("close", (code) => {
+              if (code === 0) resolve("");
+              else reject(new Error(stderr.trim() || `ffmpeg exit ${code}`));
+            });
+          }),
+        dedupeKey,
+      ),
+  });
+  const clientHttp = createClientHttpModule({
+    fs,
+    path,
+    clientHttpDir: CLIENT_HTTP_DIR,
+    enabled: CLIENT_HTTP_ENABLED,
+    serveFile,
   });
 
   async function persistIndex(payload) {
@@ -431,6 +571,10 @@ async function boot() {
       state.generatedAt = parsed.generatedAt || null;
       state.count = parsed.count || parsed.files.length;
       state.files = parsed.files;
+      state.partitions =
+        parsed.partitions && typeof parsed.partitions === "object"
+          ? parsed.partitions
+          : {};
       state.fsQuickFingerprint = buildFilesystemFingerprintFromIndex(parsed.files);
       log(
         `Loaded persisted index version=${state.version || "n/a"} count=${state.count} fsQuick=${state.fsQuickFingerprint || "n/a"}`,
@@ -454,6 +598,14 @@ async function boot() {
     detectLivePhotoFilesystem: liveService.detectLivePhotoFilesystem,
     fastIndexMode: FAST_INDEX_MODE,
     detectLivePhotos: DETECT_LIVE_PHOTOS,
+    getPreviousIndex: () => ({
+      files: Array.isArray(state.files) ? state.files : [],
+      partitions:
+        state.partitions && typeof state.partitions === "object"
+          ? state.partitions
+          : {},
+    }),
+    getForcedPartitions: () => Array.from(forcedReindexPartitions),
   });
 
   async function buildFilesystemQuickFingerprint() {
@@ -509,6 +661,8 @@ async function boot() {
     log(
       `Scan state=${state.status}${state.refreshing ? " refreshing=true" : ""}`,
     );
+    const scanT0 = Date.now();
+    metrics.scansStarted += 1;
     state.scanPromise = (async () => {
       try {
         const payload = await buildIndexPayload();
@@ -519,12 +673,19 @@ async function boot() {
         state.generatedAt = payload.generatedAt;
         state.count = payload.count;
         state.files = payload.files;
+        state.partitions =
+          payload.partitions && typeof payload.partitions === "object"
+            ? payload.partitions
+            : {};
         state.fsQuickFingerprint = buildFilesystemFingerprintFromIndex(
           payload.files,
         );
         log(
           `Scan state=ready refreshing=false count=${state.count} version=${state.version} fsQuick=${state.fsQuickFingerprint || "n/a"}`,
         );
+        state.lastScanDurationMs = Date.now() - scanT0;
+        state.lastScanAt = nowIso();
+        metrics.scansCompleted += 1;
         return payload;
       } catch (err) {
         if (!hadReadySnapshot) {
@@ -537,8 +698,12 @@ async function boot() {
         log(
           `Scan state=${state.status} refreshing=false message=${err.message}`,
         );
+        state.lastScanDurationMs = Date.now() - scanT0;
+        state.lastScanAt = nowIso();
+        metrics.scansFailed += 1;
         throw err;
       } finally {
+        forcedReindexPartitions.clear();
         state.scanPromise = null;
       }
     })();
@@ -580,7 +745,20 @@ async function boot() {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
     const pathname = decodeURIComponent(url.pathname);
+    metrics.requestsTotal += 1;
     log(`HTTP ${req.method} ${pathname}`);
+
+    if (isMutationPath(pathname, req.method)) {
+      const ip = getClientIp(req);
+      if (!checkAuth(req)) {
+        metrics.mutationDeniedAuth += 1;
+        return json(res, 401, { error: "Unauthorized" });
+      }
+      if (!checkRateLimit(ip)) {
+        metrics.mutationDeniedRate += 1;
+        return json(res, 429, { error: "Too many requests" });
+      }
+    }
 
     if (pathname === "/api/media-index") {
       if (state.status === "ready") {
@@ -663,6 +841,50 @@ async function boot() {
         generatedAt: state.generatedAt,
         count: state.count,
         lastError: state.lastError,
+        forcedPartitionsPending: forcedReindexPartitions.size,
+      });
+    }
+
+    if (pathname === "/api/partitions") {
+      if (req.method !== "GET") {
+        res.writeHead(405);
+        return res.end("Method not allowed");
+      }
+      const rows = Object.entries(state.partitions || {}).map(([key, meta]) => ({
+        key,
+        count: Number(meta?.count) || 0,
+        fingerprint: String(meta?.fingerprint || ""),
+      }));
+      rows.sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+      return json(res, 200, {
+        ok: true,
+        count: rows.length,
+        partitions: rows,
+      });
+    }
+
+    if (pathname === "/api/metrics") {
+      if (req.method !== "GET") {
+        res.writeHead(405);
+        return res.end("Method not allowed");
+      }
+      return json(res, 200, {
+        ok: true,
+        metrics: {
+          ...metrics,
+          rateLimitWindowMs: RATE_LIMIT_WINDOW_MS,
+          rateLimitMaxMutations: RATE_LIMIT_MAX_MUTATIONS,
+          rateLimitTrackedIps: rateLimitByIp.size,
+          scan: {
+            lastScanDurationMs: state.lastScanDurationMs,
+            lastScanAt: state.lastScanAt,
+            status: state.status,
+            refreshing: state.refreshing,
+            count: state.count,
+            version: state.version,
+          },
+          scheduler: scheduler.snapshot(),
+        },
       });
     }
 
@@ -672,6 +894,10 @@ async function boot() {
         const liveLists = normalizeSourceLists(liveCfg);
         return json(res, 200, {
           sourceMode: String(liveCfg.sourceMode || SOURCE_MODE).toLowerCase(),
+          clientHttpEnabled: toBool(
+            liveCfg.clientHttpEnabled ?? CLIENT_HTTP_ENABLED,
+            true,
+          ),
           mediaRoots: liveLists.mediaRoots,
           autoindexRootUrls: liveLists.autoindexRootUrls,
           mediaRoot: liveLists.mediaRoots[0] || "",
@@ -728,6 +954,10 @@ async function boot() {
           const saveCfg = {
             ...baseCfg,
             sourceMode: nextMode,
+            clientHttpEnabled: toBool(
+              payload.clientHttpEnabled ?? baseCfg.clientHttpEnabled,
+              true,
+            ),
             mediaRoots: nextMediaRoots,
             autoindexRootUrls: nextAutoRoots,
             mediaRoot: nextMediaRoots[0] || "",
@@ -775,6 +1005,60 @@ async function boot() {
       } catch (err) {
         return json(res, 400, {
           error: err.message || "No se pudo limpiar caché",
+        });
+      }
+    }
+
+    if (pathname === "/api/reindex-partition") {
+      if (req.method !== "POST") {
+        res.writeHead(405);
+        return res.end("Method not allowed");
+      }
+      try {
+        let body = "";
+        for await (const chunk of req) body += chunk;
+        const payload = JSON.parse(body || "{}");
+        const directKeys = Array.isArray(payload.partitionKeys)
+          ? payload.partitionKeys.map((x) => String(x || "").trim()).filter(Boolean)
+          : [];
+        const rootIdx = Number(payload.rootIdx);
+        const hasRootIdx = Number.isInteger(rootIdx) && rootIdx >= 0;
+        const folderGroup = String(payload.folderGroup || "").trim();
+        const month = String(payload.month || "").trim();
+        const shouldMatch =
+          hasRootIdx || folderGroup.length > 0 || month.length > 0;
+        const matched = [];
+        if (shouldMatch) {
+          for (const key of Object.keys(state.partitions || {})) {
+            const m = key.match(/^fs:(\d+):(.*):(\d{4}-\d{2}|0000-00)$/);
+            if (!m) continue;
+            const kRoot = Number(m[1]);
+            const kFolder = m[2];
+            const kMonth = m[3];
+            if (hasRootIdx && kRoot !== rootIdx) continue;
+            if (folderGroup && kFolder !== folderGroup) continue;
+            if (month && kMonth !== month) continue;
+            matched.push(key);
+          }
+        }
+        const finalKeys = [...new Set([...directKeys, ...matched])];
+        if (finalKeys.length === 0) {
+          return json(res, 400, {
+            error: "No se encontraron particiones para reindexar",
+          });
+        }
+        for (const k of finalKeys) forcedReindexPartitions.add(k);
+        triggerScanDebounced();
+        ensureScan().catch(() => {});
+        return json(res, 200, {
+          ok: true,
+          forced: finalKeys.length,
+          partitionKeys: finalKeys,
+          indexing: true,
+        });
+      } catch (err) {
+        return json(res, 400, {
+          error: err.message || "payload inválido",
         });
       }
     }
@@ -1027,12 +1311,8 @@ async function boot() {
       return serveFile(req, res, abs);
     }
 
-    if (pathname.startsWith("/js/")) {
-      return serveFile(req, res, path.resolve(CLIENT_DIR, `.${pathname}`));
-    }
-
-    if (pathname === "/" || pathname === "/index.html") {
-      return serveFile(req, res, path.resolve(CLIENT_DIR, "index.html"));
+    if (await clientHttp.handle(req, res, pathname)) {
+      return;
     }
 
     res.writeHead(404);

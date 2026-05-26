@@ -17,8 +17,20 @@ async function runCommand(command, args) {
 }
 
 function createThumbHandler(ctx) {
-  const { fs, path, createReadStream, mediaRoots, thumbCacheDir, log } = ctx;
+  const {
+    fs,
+    path,
+    createReadStream,
+    mediaRoots,
+    thumbCacheDir,
+    log,
+    execFfmpegThumb,
+  } = ctx;
   const THUMB_SIZE = 256;
+  const runFfmpeg = (args, dedupeKey = "") =>
+    typeof execFfmpegThumb === "function"
+      ? execFfmpegThumb(args, dedupeKey)
+      : runCommand("ffmpeg", args);
 
   function resolveSrc(src) {
     if (src.startsWith("/media/")) {
@@ -77,7 +89,7 @@ function createThumbHandler(ctx) {
         return true;
       }
 
-      await runCommand("ffmpeg", [
+      await runFfmpeg([
         "-hide_banner",
         "-loglevel",
         "error",
@@ -94,7 +106,7 @@ function createThumbHandler(ctx) {
         "-f",
         "mjpeg",
         outFile,
-      ]);
+      ], `thumb:video:${hash}`);
 
       await serveCachedThumb(res, outFile, "image/jpeg");
     } catch (err) {
@@ -133,7 +145,7 @@ function createThumbHandler(ctx) {
         return true;
       }
 
-      await runCommand("ffmpeg", [
+      await runFfmpeg([
         "-hide_banner",
         "-loglevel",
         "error",
@@ -154,7 +166,7 @@ function createThumbHandler(ctx) {
         "-f",
         "webp",
         outFile,
-      ]);
+      ], `thumb:image:${hash}`);
       await serveCachedThumb(res, outFile, "image/webp");
     } catch (err) {
       log(`image thumb generation failed src=${src} err=${err.message}`);
@@ -190,7 +202,7 @@ function createThumbHandler(ctx) {
         return true;
       }
 
-      await runCommand("ffmpeg", [
+      await runFfmpeg([
         "-hide_banner",
         "-loglevel",
         "error",
@@ -203,7 +215,7 @@ function createThumbHandler(ctx) {
         "-f",
         "mjpeg",
         outFile,
-      ]);
+      ], `thumb:web:${hash}`);
       await serveCachedThumb(res, outFile, "image/jpeg");
     } catch (err) {
       log(`web image generation failed src=${src} err=${err.message}`);

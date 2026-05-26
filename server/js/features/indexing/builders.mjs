@@ -215,19 +215,97 @@ function encodePathForUrl(relPosixPath) {
     .join("/");
 }
 
+function monthFromMtimeMs(mtimeMs) {
+  if (!Number.isFinite(mtimeMs) || mtimeMs <= 0) return "0000-00";
+  const d = new Date(mtimeMs);
+  const y = d.getUTCFullYear();
+  const m = `${d.getUTCMonth() + 1}`.padStart(2, "0");
+  return `${y}-${m}`;
+}
+
 async function buildFilesystemIndex(ctx) {
-  const { fs, mediaRoots, detectLivePhotoFilesystem, fastIndexMode, detectLivePhotos } = ctx;
+  const {
+    fs,
+    mediaRoots,
+    detectLivePhotoFilesystem,
+    fastIndexMode,
+    detectLivePhotos,
+    getPreviousIndex,
+    getForcedPartitions,
+    log,
+  } = ctx;
   const files = [];
+  const partitionMeta = {};
+  const prev = typeof getPreviousIndex === "function" ? getPreviousIndex() : null;
+  const prevFiles = Array.isArray(prev?.files) ? prev.files : [];
+  const prevPartitions =
+    prev?.partitions && typeof prev.partitions === "object" ? prev.partitions : {};
+  const forcedPartitions = new Set(
+    typeof getForcedPartitions === "function" ? getForcedPartitions() : [],
+  );
+  const prevFilesByPartition = new Map();
+  for (const pf of prevFiles) {
+    const pKey =
+      typeof pf?.partitionKey === "string" && pf.partitionKey
+        ? pf.partitionKey
+        : "";
+    if (!pKey) continue;
+    if (!prevFilesByPartition.has(pKey)) prevFilesByPartition.set(pKey, []);
+    prevFilesByPartition.get(pKey).push(pf);
+  }
+  let rebuiltPartitions = 0;
+  let reusedPartitions = 0;
   for (let rootIdx = 0; rootIdx < mediaRoots.length; rootIdx += 1) {
     const mediaRoot = mediaRoots[rootIdx];
     const entryId = `fs:${rootIdx}`;
     const entryLabel = entryLabelFromFilesystemRoot(mediaRoot);
     const absFiles = await walk(fs, mediaRoot);
+    const partitionEntries = new Map();
     for (const abs of absFiles) {
       const rel = toPosix(path.relative(mediaRoot, abs));
       const type = detectType(rel);
       if (!type) continue;
       const st = await fs.stat(abs);
+      const relDir = toPosix(path.dirname(rel));
+      const folderGroup = relDir === "." ? "root" : relDir;
+      const monthGroup = monthFromMtimeMs(st.mtimeMs);
+      const partitionKey = `fs:${rootIdx}:${folderGroup}:${monthGroup}`;
+      if (!partitionEntries.has(partitionKey)) partitionEntries.set(partitionKey, []);
+      partitionEntries.get(partitionKey).push({
+        abs,
+        rel,
+        type,
+        st,
+        folderGroup,
+        partitionKey,
+      });
+    }
+    for (const [partitionKey, entries] of partitionEntries.entries()) {
+      const fp = createHash("sha1");
+      for (const e of entries) {
+        fp.update(`${e.rel}|${e.st.size}|${Math.floor(e.st.mtimeMs)}\n`);
+      }
+      const fingerprint = fp.digest("hex").slice(0, 16);
+      const prevMeta = prevPartitions[partitionKey];
+      if (
+        prevMeta &&
+        prevMeta.fingerprint === fingerprint &&
+        !forcedPartitions.has(partitionKey) &&
+        prevFilesByPartition.has(partitionKey)
+      ) {
+        const reused = prevFilesByPartition.get(partitionKey);
+        files.push(...reused);
+        partitionMeta[partitionKey] = {
+          fingerprint,
+          count: reused.length,
+        };
+        reusedPartitions += 1;
+        continue;
+      }
+      rebuiltPartitions += 1;
+      const built = [];
+      for (const e of entries) {
+        const { abs, rel, type, st, folderGroup } = e;
       const name = decodeURIComponent(path.basename(rel));
       const dateInfo = guessDateDetailed(name, rel);
       let resolvedDate = dateInfo.date;
@@ -239,8 +317,6 @@ async function buildFilesystemIndex(ctx) {
           datePatched = false;
         }
       }
-      const relDir = toPosix(path.dirname(rel));
-      const folderGroup = relDir === "." ? "root" : relDir;
       const mediaSrc = `/media/${rootIdx}/${encodePathForUrl(rel)}`;
       const dims = fastIndexMode
         ? { width: null, height: null }
@@ -302,10 +378,20 @@ async function buildFilesystemIndex(ctx) {
           : null,
         entryId,
         entryLabel,
+        partitionKey,
       });
     }
+      files.push(...built);
+      partitionMeta[partitionKey] = {
+        fingerprint,
+        count: built.length,
+      };
+    }
   }
-  return files;
+  log(
+    `Filesystem incremental partitions reused=${reusedPartitions} rebuilt=${rebuiltPartitions}`,
+  );
+  return { files, partitions: partitionMeta };
 }
 
 async function buildAutoindexIndex(ctx) {
@@ -390,15 +476,20 @@ function buildIndexPayloadFactory(ctx) {
   const { sourceMode, log, fastIndexMode } = ctx;
   return async function buildIndexPayload() {
     log(`Index build start mode=${sourceMode} fastIndexMode=${fastIndexMode ? "true" : "false"}`);
-    const filesRaw =
-      sourceMode === "filesystem"
-        ? await buildFilesystemIndex(ctx)
-        : sourceMode === "autoindex"
-          ? await buildAutoindexIndex(ctx)
-          : [
-              ...(await buildFilesystemIndex(ctx)),
-              ...(await buildAutoindexIndex(ctx)),
-            ];
+    let filesRaw = [];
+    let partitions = {};
+    if (sourceMode === "filesystem") {
+      const fsResult = await buildFilesystemIndex(ctx);
+      filesRaw = fsResult.files;
+      partitions = fsResult.partitions || {};
+    } else if (sourceMode === "autoindex") {
+      filesRaw = await buildAutoindexIndex(ctx);
+      partitions = {};
+    } else {
+      const fsResult = await buildFilesystemIndex(ctx);
+      filesRaw = [...fsResult.files, ...(await buildAutoindexIndex(ctx))];
+      partitions = fsResult.partitions || {};
+    }
     const filesByUrl = dedupeFilesByUrl(filesRaw);
     const files = sourceMode === "mixed" ? dedupeMixedImagesByFingerprint(filesByUrl) : filesByUrl;
     files.sort((a, b) => {
@@ -418,6 +509,7 @@ function buildIndexPayloadFactory(ctx) {
       generatedAt: new Date().toISOString(),
       count: files.length,
       files,
+      partitions,
     };
   };
 }
