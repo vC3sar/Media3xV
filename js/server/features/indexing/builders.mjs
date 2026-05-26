@@ -288,6 +288,14 @@ async function buildFilesystemIndex(ctx) {
         livePhoto: liveMeta
           ? {
               enabled: true,
+              photoUrl:
+                liveMeta.stillPath &&
+                path.resolve(liveMeta.stillPath).startsWith(mediaRoot)
+                  ? `/media/${rootIdx}/${encodePathForUrl(
+                      toPosix(path.relative(mediaRoot, liveMeta.stillPath)),
+                    )}`
+                  : null,
+              videoUrl: mediaSrc,
               snapshotUrl: `/live/snapshot?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}`,
               webVideoUrl: `/live/web-video?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}`,
             }

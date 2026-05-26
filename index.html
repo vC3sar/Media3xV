@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="./js/media-loader.js"></script>
+<script src="https://cdn.apple-livephotoskit.com/lpk/1/livephotoskit.js"></script>
 <script>
 tailwind.config = { darkMode: 'class' }
 </script>
@@ -706,6 +707,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="m15 18-6-6 6-6"/></svg>
     </button>
     <img id="viewerMedia" src="" alt="" style="display:none;">
+    <div id="viewerLivePhotoPlayer" style="display:none;width:92vw;max-width:92vw;height:82vh;max-height:82vh;"></div>
     <video id="viewerVideo" controls loop playsinline webkit-playsinline="true" style="display:none;max-width:92vw;max-height:82vh;"></video>
     <div id="viewerVideoFallback" style="display:none;flex-direction:column;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--border);padding:18px 16px;border-radius:12px;max-width:520px;">
       <p style="font-size:13px;color:var(--muted-l);text-align:center;">No se pudo reproducir este video (codec no compatible o archivo dañado). Intenta descargarlo y reproducirlo en tu computadora.</p>
