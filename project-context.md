@@ -1116,6 +1116,8 @@ const log = (...args) =>
 ⋮----
 async function serveFile(req, res, absolutePath)
 ⋮----
+// Be tolerant with client prefetch ranges (e.g. bytes=0-65535 on small files).
+⋮----
 async function persistIndex(payload)
 ⋮----
 async function loadPersistedIndex()
@@ -1218,8 +1220,6 @@ function enforceMobileGridSize()
 ⋮----
 function guessDate(name, path)
 ⋮----
-async function listDir(path)
-⋮----
 function dbg(...args)
 ⋮----
 async function loadConfigModalData()
@@ -1282,32 +1282,14 @@ function startIndexPolling()
 ⋮----
 function updateStats()
 ⋮----
-// ── RENDER CHUNKS ────────────────────────────────────────────
-⋮----
-function renderChunk()
-⋮----
-function buildGroup(label, files)
-⋮----
-// ── GRID ─────────────────────────────────────────────────────
-function buildGrid(files)
-⋮----
-card.onclick = ()
-⋮----
 function placeholder(type)
 ⋮----
-// ── LIST ─────────────────────────────────────────────────────
-function buildList(files)
-⋮----
-row.onclick = ()
-⋮----
-// ── LAZY LOAD ─────────────────────────────────────────────────
-⋮----
-// Infinite scroll
-function resetInfiniteObserver()
-⋮----
-function resubscribeThumbObservers()
+// Legacy chunk/lazy/infinite rendering removed. Virtual renderer is the
+// single source of DOM updates and thumbnail hydration.
 ⋮----
 function suspendThumbLoading(on)
+⋮----
+// Keep legacy observers disconnected. Virtual renderer hydrates thumbs.
 ⋮----
 function beginViewerPriorityLoad()
 ⋮----
