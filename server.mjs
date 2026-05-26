@@ -308,19 +308,29 @@ async function boot() {
         }
         let start = m[1] === "" ? 0 : Number(m[1]);
         let end = m[2] === "" ? total - 1 : Number(m[2]);
-        if (
-          Number.isNaN(start) ||
-          Number.isNaN(end) ||
-          start > end ||
-          start < 0 ||
-          end >= total
-        ) {
+        if (Number.isNaN(start) || Number.isNaN(end) || start < 0) {
+          log(
+            `RANGE 416 invalid-numeric start=${start} end=${end} total=${total} path=${absolutePath}`,
+          );
+          res.writeHead(416, { "Content-Range": `bytes */${total}` });
+          return res.end();
+        }
+        if (start >= total) {
           log(
             `RANGE 416 unsat start=${start} end=${end} total=${total} path=${absolutePath}`,
           );
           res.writeHead(416, { "Content-Range": `bytes */${total}` });
           return res.end();
         }
+        if (end < start) {
+          log(
+            `RANGE 416 invalid-order start=${start} end=${end} total=${total} path=${absolutePath}`,
+          );
+          res.writeHead(416, { "Content-Range": `bytes */${total}` });
+          return res.end();
+        }
+        // Be tolerant with client prefetch ranges (e.g. bytes=0-65535 on small files).
+        if (end >= total) end = total - 1;
         const chunkSize = end - start + 1;
         log(
           `RANGE 206 mime=${mimeType} start=${start} end=${end} total=${total} path=${absolutePath}`,

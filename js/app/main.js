@@ -40,8 +40,7 @@ let currentType = "all";
 let currentEntry = "all";
 let favoritesOnly = false;
 let dragSrc = null;
-let renderedGroups = 0,
-  groupKeys = [],
+let groupKeys = [],
   groupMap = {};
 let vZoom = 1,
   vOffX = 0,
@@ -58,7 +57,6 @@ let touchStartX = 0,
 let currentIndexVersion = null;
 let indexPollTimer = null;
 let indexRetryCount = 0;
-let sentinelObs = null;
 let viewerVideoErrBound = false;
 let viewerVideoPerf = null;
 let thumbLoadingSuspended = false;
@@ -645,39 +643,6 @@ function guessDate(name, path) {
   m = text.match(/(20\d{2})/);
   if (m) return `${m[1]}-XX-XX`;
   return "0000-sin-fecha";
-}
-
-// ── LOAD FILES ───────────────────────────────────────────────
-async function listDir(path) {
-  const res = await fetch(path);
-  const html = await res.text();
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  for (const a of doc.querySelectorAll("a")) {
-    const href = a.getAttribute("href");
-    if (!href || href.startsWith("?") || href === "../") continue;
-    const full = new URL(href, location.origin + path).pathname;
-    if (href.endsWith("/")) {
-      await listDir(full);
-      continue;
-    }
-    const type = IMG.test(href)
-      ? "image"
-      : VID.test(href)
-        ? "video"
-        : AUD.test(href)
-          ? "audio"
-          : null;
-    if (!type) continue;
-    // estimate size from name pattern or default
-    const sizeEst = Math.floor(Math.random() * 8000000) + 200000; // placeholder until actual HEAD requests
-    allFiles.push({
-      url: full,
-      name: decodeURIComponent(href),
-      type,
-      date: guessDate(href, full),
-      size: sizeEst,
-    });
-  }
 }
 
 function dbg(...args) {
@@ -1324,7 +1289,6 @@ function applyNewFileSet(nextFiles, source) {
   allFiles = nextFiles;
   enqueueThumbPrewarm(allFiles);
   updateEntryFilterUI();
-  renderedGroups = 0;
   groupKeys = [];
   groupMap = {};
   applyFilters();
@@ -1431,100 +1395,6 @@ function updateStats() {
   });
 }
 
-// ── RENDER CHUNKS ────────────────────────────────────────────
-const CHUNK = 3;
-function renderChunk() {
-  const app = document.getElementById("app");
-  if (renderedGroups === 0) app.innerHTML = "";
-  if (!groupKeys.length) {
-    app.innerHTML = `<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg><p>Sin resultados</p></div>`;
-    return;
-  }
-  const end = Math.min(renderedGroups + CHUNK, groupKeys.length);
-  for (let i = renderedGroups; i < end; i++)
-    app.appendChild(buildGroup(groupKeys[i], groupMap[groupKeys[i]]));
-  renderedGroups = end;
-}
-
-function buildGroup(label, files) {
-  const sec = document.createElement("section");
-  sec.style.marginBottom = "28px";
-  const h = document.createElement("div");
-  h.className = "section-head";
-  const displayLabel =
-    currentGroup === "date" ? formatDateGroupLabel(label) : label;
-  h.innerHTML = `<span>${displayLabel}</span><span style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-left:6px;">${files.length}</span>`;
-  sec.appendChild(h);
-  sec.appendChild(layoutMode === "list" ? buildList(files) : buildGrid(files));
-  return sec;
-}
-
-// ── GRID ─────────────────────────────────────────────────────
-function buildGrid(files) {
-  const px = SIZE_PX[sizeIdx];
-  const g = document.createElement("div");
-  g.style.cssText = `display:grid;grid-template-columns:repeat(auto-fill,minmax(${px}px,1fr));gap:6px;`;
-  files.forEach((f) => {
-    const card = document.createElement("div");
-    card.className = "media-card";
-    card.style.aspectRatio = "1";
-    card.setAttribute("draggable", "true");
-
-    const thumb = document.createElement("div");
-    thumb.style.cssText = "width:100%;height:100%;";
-    thumb.dataset.src = f.url;
-    thumb.dataset.type = f.type;
-    if (f.type === "video" && f.thumbUrl) thumb.dataset.thumb = f.thumbUrl;
-    thumb.innerHTML = placeholder(f.type);
-    card.appendChild(thumb);
-
-    const ov = document.createElement("div");
-    ov.className = "card-overlay";
-    ov.innerHTML = `<span class="card-name">${f.name}</span>`;
-    card.appendChild(ov);
-
-    if (f.type !== "image") {
-      const badge = document.createElement("div");
-      badge.className = "type-badge";
-      badge.innerHTML =
-        f.type === "video"
-          ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>Video`
-          : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/></svg>Audio`;
-      card.appendChild(badge);
-    }
-
-    const gi = filteredFiles.findIndex((x) => x.url === f.url);
-    card.onclick = () => openViewer(gi);
-    card.addEventListener("dragstart", () => {
-      dragSrc = f.url;
-    });
-    card.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      card.classList.add("drag-over");
-    });
-    card.addEventListener("dragleave", () =>
-      card.classList.remove("drag-over"),
-    );
-    card.addEventListener("drop", (e) => {
-      e.preventDefault();
-      card.classList.remove("drag-over");
-      reorder(dragSrc, f.url);
-    });
-    if (f.type === "video") {
-      card.addEventListener("mouseenter", () => {
-        requestVideoThumbPreview(thumb, f.url, 0);
-      });
-      card.addEventListener("click", () => {
-        requestVideoThumbPreview(thumb, f.url, 0);
-      });
-    }
-    g.appendChild(card);
-    lazyObs.observe(thumb);
-    if (f.type === "video") videoReleaseObs.observe(thumb);
-  });
-  return g;
-}
-
 function placeholder(type) {
   const icons = {
     image: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" style="width:32px;height:32px;color:var(--panel)"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>`,
@@ -1534,157 +1404,12 @@ function placeholder(type) {
   return `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--card);">${icons[type] || ""}</div>`;
 }
 
-// ── LIST ─────────────────────────────────────────────────────
-function buildList(files) {
-  const ul = document.createElement("div");
-  ul.style.cssText = "display:flex;flex-direction:column;gap:4px;";
-  files.forEach((f) => {
-    const gi = filteredFiles.findIndex((x) => x.url === f.url);
-    const row = document.createElement("div");
-    row.className = "list-row";
-    const typeIco = {
-      image: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:18px;height:18px"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>`,
-      video: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:18px;height:18px"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>`,
-      audio: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:18px;height:18px"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`,
-    }[f.type];
-
-    const thumb = document.createElement("div");
-    thumb.className = "list-thumb";
-    thumb.dataset.src = f.url;
-    thumb.dataset.type = f.type;
-    if (f.type === "video" && f.thumbUrl) thumb.dataset.thumb = f.thumbUrl;
-    thumb.innerHTML = typeIco;
-
-    const rowBody = document.createElement("div");
-    rowBody.style.cssText = "flex:1;min-width:0;";
-    rowBody.innerHTML = `<div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.name}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">${prettyDate(f.date)}</div>`;
-    const rowDl = document.createElement("a");
-    rowDl.href = f.url;
-    rowDl.download = f.name;
-    rowDl.setAttribute("onclick", "event.stopPropagation()");
-    rowDl.style.cssText =
-      "background:var(--panel);border:1px solid var(--border);color:var(--muted-l);padding:5px 9px;border-radius:7px;text-decoration:none;font-size:12px;transition:background 0.15s;display:flex;align-items:center;gap:4px;";
-    rowDl.innerHTML =
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-    row.appendChild(thumb);
-    row.appendChild(rowBody);
-    row.appendChild(rowDl);
-    if (f.type === "video") {
-      row.addEventListener("mouseenter", () => {
-        requestVideoThumbPreview(thumb, f.url, 0);
-      });
-      row.addEventListener("click", () => {
-        requestVideoThumbPreview(thumb, f.url, 0);
-      });
-    }
-    row.onclick = () => openViewer(gi);
-    ul.appendChild(row);
-    lazyObs.observe(thumb);
-    if (f.type === "video") videoReleaseObs.observe(thumb);
-  });
-  return ul;
-}
-
-// ── LAZY LOAD ─────────────────────────────────────────────────
-const lazyObs = new IntersectionObserver(
-  (entries) => {
-    if (thumbLoadingSuspended) return;
-    entries.forEach((e) => {
-      if (!e.isIntersecting) return;
-      const el = e.target;
-      if (!document.body.contains(el)) return;
-      if (el.dataset.loaded === "1" || el.dataset.loading === "1") return;
-      el.dataset.loading = "1";
-      lazyObs.unobserve(el);
-      const { src, type } = el.dataset;
-      if (currentType !== "all" && type !== currentType) {
-        el.dataset.loading = "0";
-        return;
-      }
-      if (!src) {
-        el.dataset.loading = "0";
-        return;
-      }
-      if (type === "image") {
-        window.MediaLoader.loadImageWithRetry(src, {
-          retries: 2,
-          retryDelayMs: 200,
-        })
-          .then((img) => {
-            img.className = el.classList.contains("list-thumb")
-              ? ""
-              : "w-full h-full object-cover";
-            img.style.cssText =
-              "width:100%;height:100%;object-fit:cover;border-radius:inherit;";
-            el.innerHTML = "";
-            el.appendChild(img);
-            el.dataset.loaded = "1";
-          })
-          .catch(() => {
-            el.dataset.loaded = "0";
-            el.innerHTML = `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--card);color:var(--muted);font-size:10px;">No se pudo cargar</div>`;
-            setTimeout(() => lazyObs.observe(el), 1200);
-          })
-          .finally(() => {
-            el.dataset.loading = "0";
-          });
-      } else if (type === "video") {
-        requestVideoThumbPreview(el, src, VIDEO_THUMB_DEFER_MS, true);
-      }
-    });
-  },
-  { rootMargin: "400px" },
-);
-
-const videoReleaseObs = new IntersectionObserver(
-  (entries) => {
-    if (thumbLoadingSuspended) return;
-    entries.forEach((e) => {
-      const el = e.target;
-      if (!el || el.dataset.type !== "video") return;
-      if (e.isIntersecting) return;
-      cleanupVideoThumb(el);
-      videoReleaseObs.unobserve(el);
-      setTimeout(() => {
-        if (document.body.contains(el)) {
-          lazyObs.observe(el);
-          videoReleaseObs.observe(el);
-        }
-      }, 200);
-    });
-  },
-  { rootMargin: "1200px" },
-);
-
-// Infinite scroll
-function resetInfiniteObserver() {
-  const sentinel = document.getElementById("sentinel");
-  if (!sentinel) return;
-  if (sentinelObs) sentinelObs.disconnect();
-  sentinelObs = new IntersectionObserver(
-    (e) => {
-      if (e[0].isIntersecting && renderedGroups < groupKeys.length)
-        renderChunk();
-    },
-    { rootMargin: "500px" },
-  );
-  sentinelObs.observe(sentinel);
-}
-resetInfiniteObserver();
-
-function resubscribeThumbObservers() {
-  const thumbs = document.querySelectorAll("[data-src][data-type]");
-  thumbs.forEach((el) => {
-    lazyObs.observe(el);
-    if (el.dataset.type === "video") videoReleaseObs.observe(el);
-  });
-}
+// Legacy chunk/lazy/infinite rendering removed. Virtual renderer is the
+// single source of DOM updates and thumbnail hydration.
 
 function suspendThumbLoading(on) {
   thumbLoadingSuspended = on;
   if (on) {
-    lazyObs.disconnect();
-    videoReleaseObs.disconnect();
     videoLoader.cancelByPrefix("video:thumb:");
     document.querySelectorAll("[data-src][data-type]").forEach((el) => {
       const st = getThumbNodeState(el);
@@ -1695,7 +1420,7 @@ function suspendThumbLoading(on) {
     });
     return;
   }
-  resubscribeThumbObservers();
+  // Keep legacy observers disconnected. Virtual renderer hydrates thumbs.
 }
 
 function beginViewerPriorityLoad() {
@@ -2466,24 +2191,28 @@ async function mountThumbWithSwap(el, file, src, level = "u", blurPx = 0) {
 
 function revokeObjectUrlsInNode(node) {
   if (!node) return;
-  const st = getThumbNodeState(node);
-  if (st.abortController) st.abortController.abort();
-  st.inFlightPromise = null;
-  st.status = st.status === "loaded" ? "stale" : st.status;
-  st.objectUrls.forEach((u) => {
-    try {
-      URL.revokeObjectURL(u);
-    } catch (_) {}
-  });
-  st.objectUrls.clear();
-  dbg("thumb evicted -> revoked", { token: st.token, level: st.currentLevel });
-  node.querySelectorAll("img[data-objurl]").forEach((img) => {
-    const u = img.dataset.objurl;
-    if (!u) return;
-    try {
-      URL.revokeObjectURL(u);
-    } catch (_) {}
-    img.removeAttribute("data-objurl");
+  const targets = [node, ...node.querySelectorAll("[data-src][data-type]")];
+  targets.forEach((el) => {
+    const st = getThumbNodeState(el);
+    if (st.abortController) st.abortController.abort();
+    st.abortController = null;
+    st.inFlightPromise = null;
+    st.status = st.status === "loaded" ? "stale" : st.status;
+    st.objectUrls.forEach((u) => {
+      try {
+        URL.revokeObjectURL(u);
+      } catch (_) {}
+    });
+    st.objectUrls.clear();
+    el.querySelectorAll("img[data-objurl]").forEach((img) => {
+      const u = img.dataset.objurl;
+      if (!u) return;
+      try {
+        URL.revokeObjectURL(u);
+      } catch (_) {}
+      img.removeAttribute("data-objurl");
+    });
+    dbg("thumb evicted -> revoked", { token: st.token, level: st.currentLevel });
   });
 }
 
