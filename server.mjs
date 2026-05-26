@@ -200,6 +200,10 @@ async function boot() {
     process.env.FAST_INDEX_MODE ?? cfg.fastIndexMode,
     false,
   );
+  const DETECT_LIVE_PHOTOS = toBool(
+    process.env.DETECT_LIVE_PHOTOS ?? cfg.detectLivePhotos,
+    true,
+  );
   const DEBUG = toBool(process.env.DEBUG ?? cfg.debug, false);
 
   const log = (...args) => {
@@ -429,6 +433,7 @@ async function boot() {
     log,
     detectLivePhotoFilesystem: liveService.detectLivePhotoFilesystem,
     fastIndexMode: FAST_INDEX_MODE,
+    detectLivePhotos: DETECT_LIVE_PHOTOS,
   });
 
   async function buildFilesystemQuickFingerprint() {
@@ -947,7 +952,10 @@ async function boot() {
       return thumbHandler.handleImage(req, res, url);
     }
     if (pathname === "/thumb/web-image") {
-      return thumbHandler.handleWebImage(req, res, url);
+      if (typeof thumbHandler.handleWebImage === "function") {
+        return thumbHandler.handleWebImage(req, res, url);
+      }
+      return thumbHandler.handleImage(req, res, url);
     }
 
     if (pathname === "/live/snapshot") {

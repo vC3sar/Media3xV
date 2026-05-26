@@ -13,6 +13,7 @@ const defaults = {
   filesystemRefreshMs: 15000,
   autoindexRefreshMs: 20000,
   fastIndexMode: false,
+  detectLivePhotos: true,
   debug: false,
 };
 

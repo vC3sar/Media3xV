@@ -209,7 +209,7 @@ function deriveDateGroup(dateStr, mtimeMs) {
 }
 
 async function buildFilesystemIndex(ctx) {
-  const { fs, mediaRoots, detectLivePhotoFilesystem, fastIndexMode } = ctx;
+  const { fs, mediaRoots, detectLivePhotoFilesystem, fastIndexMode, detectLivePhotos } = ctx;
   const files = [];
   for (let rootIdx = 0; rootIdx < mediaRoots.length; rootIdx += 1) {
     const mediaRoot = mediaRoots[rootIdx];
@@ -245,7 +245,7 @@ async function buildFilesystemIndex(ctx) {
         }
       }
       const liveMeta =
-        type === "video" && !fastIndexMode
+        type === "video" && detectLivePhotos
           ? await detectLivePhotoFilesystem(abs)
           : null;
       const thumb128Url =

@@ -1563,6 +1563,9 @@ function renderViewer() {
     img.dataset.viewerQuality = 'pending';
     img.dataset.viewerTarget = f.url;
     const isHeic = f.url.toLowerCase().endsWith('.heic') || f.url.toLowerCase().endsWith('.heif');
+    if (isHeic) {
+      toast('Este navegador puede no mostrar HEIC/HEIF. Descarga la imagen para verla completa.', 4200);
+    }
     const targetUrl = isHeic ? `/thumb/web-image?src=${encodeURIComponent(f.url)}` : f.url;
 
     const t512 = f.thumb512Url || f.thumbUrl || '';
