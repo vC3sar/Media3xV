@@ -189,6 +189,32 @@ const typeMatch = (f) =>
 const dayGroupKey = (f) =>
 ```
 
+## File: js/server/shared/media-utils.mjs
+```javascript
+function detectType(name)
+⋮----
+function guessDateDetailed(name, relPath)
+⋮----
+function toPosix(p)
+⋮----
+function parseAutoindexLinks(html)
+⋮----
+function toFileNameFromUrl(u)
+⋮----
+function entryLabelFromFilesystemRoot(rootPath)
+⋮----
+function entryLabelFromAutoindexRoot(rootUrl)
+⋮----
+function dedupeFilesByUrl(files)
+⋮----
+function dedupeMixedImagesByFingerprint(files)
+```
+
+## File: js/app/config.js
+```javascript
+
+```
+
 ## File: js/server/features/config/repository.mjs
 ```javascript
 async function readConfig(fs, configFile)
@@ -212,7 +238,13 @@ async function probeLivePhotoMetadata(absVideoPath)
 ⋮----
 async function findLiveStillPair(absVideoPath)
 ⋮----
+// Common duplicate suffixes from mobile/gallery copy operations:
+// IMG_0019(1).MP4 -> try matching still IMG_0019.HEIC
+⋮----
 async function detectLivePhotoFilesystem(absVideoPath)
+⋮----
+// Lenient detection: if a still pair exists with same base name, treat it
+// as live photo even when embedded metadata is missing.
 ⋮----
 function getLiveWebOutFile(src, v, absVideoPath)
 ⋮----
@@ -225,27 +257,6 @@ async function handleWebVideo(req, res, url)
 async function handlePrepare(res, url)
 ⋮----
 async function handleStatus(res, url)
-```
-
-## File: js/server/shared/media-utils.mjs
-```javascript
-function detectType(name)
-⋮----
-function guessDateDetailed(name, relPath)
-⋮----
-function toPosix(p)
-⋮----
-function parseAutoindexLinks(html)
-⋮----
-function toFileNameFromUrl(u)
-⋮----
-function entryLabelFromFilesystemRoot(rootPath)
-⋮----
-function entryLabelFromAutoindexRoot(rootUrl)
-⋮----
-function dedupeFilesByUrl(files)
-⋮----
-function dedupeMixedImagesByFingerprint(files)
 ```
 
 ## File: package.json
@@ -284,13 +295,9 @@ function dedupeMixedImagesByFingerprint(files)
   "filesystemRefreshMs": 15000,
   "autoindexRefreshMs": 20000,
   "fastIndexMode": true,
+  "detectLivePhotos": true,
   "debug": true
 }
-```
-
-## File: js/app/config.js
-```javascript
-
 ```
 
 ## File: js/server/features/thumb/handler.mjs
@@ -306,6 +313,8 @@ async function serveCachedThumb(res, outFile, contentType)
 async function handleVideo(req, res, url)
 ⋮----
 async function handleImage(req, res, url)
+⋮----
+async function handleWebImage(req, res, url)
 ```
 
 ## File: js/server/features/indexing/builders.mjs
@@ -1267,6 +1276,8 @@ function viewerNav(d)
 function viewerZoom(d)
 ⋮----
 function toast(msg, ms = 2200)
+⋮----
+function scheduleIdbSweep()
 ⋮----
 function getThumbNodeState(el)
 ⋮----

@@ -105,6 +105,30 @@ function createLiveService(ctx) {
         if (await pathExists(stillUpper)) return stillUpper;
       }
     }
+
+    // Fallback for iPhone variants like IMG_E0019.MP4 vs IMG_0019.HEIC
+    // or duplicated copies with suffixes.
+    const dir = path.dirname(absVideoPath);
+    const videoBaseName = path.basename(base).replace(/\(\d+\)$/i, "");
+    const seqMatch = videoBaseName.match(/^IMG_[A-Z]?(\d{4,})$/i);
+    const seq = seqMatch?.[1] || null;
+    if (seq) {
+      try {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        for (const e of entries) {
+          if (!e.isFile()) continue;
+          const candidateName = e.name;
+          const candidateExt = path.extname(candidateName).toLowerCase();
+          if (![".jpg", ".jpeg", ".heic", ".heif", ".png"].includes(candidateExt)) continue;
+          const candidateBase = path.basename(candidateName, candidateExt).replace(/\(\d+\)$/i, "");
+          const candidateSeqMatch = candidateBase.match(/^IMG_[A-Z]?(\d{4,})$/i);
+          if (!candidateSeqMatch) continue;
+          if (candidateSeqMatch[1] !== seq) continue;
+          return path.resolve(dir, candidateName);
+        }
+      } catch {}
+    }
+
     return null;
   }
 
@@ -113,8 +137,13 @@ function createLiveService(ctx) {
     if (!stillPath) return null;
     const hasLiveMetadata = await probeLivePhotoMetadata(absVideoPath);
     const baseName = path.basename(absVideoPath, path.extname(absVideoPath));
-    const looksLikeIphoneCapture = /^IMG_\d{4,}$/i.test(baseName);
-    if (!hasLiveMetadata && !looksLikeIphoneCapture) return null;
+    const normalizedBaseName = baseName.replace(/\(\d+\)$/i, "");
+    const looksLikeIphoneCapture = /^IMG_\d{4,}$/i.test(normalizedBaseName);
+    // Lenient detection: if a still pair exists with same base name, treat it
+    // as live photo even when embedded metadata is missing.
+    if (!hasLiveMetadata && !looksLikeIphoneCapture) {
+      return { stillPath };
+    }
     return { stillPath };
   }
 
