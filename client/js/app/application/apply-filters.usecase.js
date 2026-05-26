@@ -21,16 +21,39 @@ export function applyFiltersUseCase({ allFiles, favoritesOnly, currentType, curr
     (!q || f.name.toLowerCase().includes(q) || f.url.toLowerCase().includes(q))
   );
 
+  const compareText = (a, b) => String(a || '').localeCompare(String(b || ''));
+  const compareNumber = (a, b) => Number(a || 0) - Number(b || 0);
+  const tieBreak = (a, b) =>
+    compareNumber(b?.mtimeMs, a?.mtimeMs) ||
+    compareText(a?.name, b?.name) ||
+    compareText(a?.url, b?.url);
+
   if (currentSort === 'invert') filteredFiles.reverse();
   else {
     filteredFiles.sort((a, b) => {
       switch (currentSort) {
-        case 'date-desc': return dateRank(b.date) - dateRank(a.date);
-        case 'date-asc': return dateRank(a.date) - dateRank(b.date);
-        case 'name-asc': return a.name.localeCompare(b.name);
-        case 'name-desc': return b.name.localeCompare(a.name);
-        case 'heavy-desc': return b.size - a.size;
-        case 'heavy-asc': return a.size - b.size;
+        case 'date-desc':
+          return (
+            dateRank(b.date) - dateRank(a.date) ||
+            compareNumber(b?.mtimeMs, a?.mtimeMs) ||
+            compareText(a?.name, b?.name) ||
+            compareText(a?.url, b?.url)
+          );
+        case 'date-asc':
+          return (
+            dateRank(a.date) - dateRank(b.date) ||
+            compareNumber(a?.mtimeMs, b?.mtimeMs) ||
+            compareText(a?.name, b?.name) ||
+            compareText(a?.url, b?.url)
+          );
+        case 'name-asc':
+          return compareText(a?.name, b?.name) || compareText(a?.url, b?.url);
+        case 'name-desc':
+          return compareText(b?.name, a?.name) || compareText(a?.url, b?.url);
+        case 'heavy-desc':
+          return compareNumber(b?.size, a?.size) || tieBreak(a, b);
+        case 'heavy-asc':
+          return compareNumber(a?.size, b?.size) || tieBreak(a, b);
         default: return 0;
       }
     });

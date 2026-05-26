@@ -32,6 +32,50 @@ import { applyFiltersUseCase } from "./application/apply-filters.usecase.js";
 const RUNTIME_BASE_URL = String(window.media3xvRuntime?.baseUrl || "")
   .trim()
   .replace(/\/+$/, "");
+const DEBUG_VIEWER_NAV =
+  new URLSearchParams(location.search).get("debugViewerNav") === "true";
+function viewerNavDbg(event, payload = {}) {
+  if (!DEBUG_VIEWER_NAV) return;
+  try {
+    const sourceFiles = viewerFilesSnapshot.length
+      ? viewerFilesSnapshot
+      : filteredFiles;
+    const source = viewerFilesSnapshot.length ? "snapshot" : "filtered";
+    const activeUrl = sourceFiles[currentViewerIdx]?.url || "";
+    console.log("[DEBUG-VIEWER-NAV]", event, {
+      source,
+      currentViewerIdx,
+      currentViewerUrl,
+      activeUrl,
+      sourceLen: sourceFiles.length,
+      ...payload,
+    });
+  } catch (err) {
+    console.log("[DEBUG-VIEWER-NAV]", event, payload, err?.message || err);
+  }
+}
+function viewerNavWindow(centerIdx, radius = 2) {
+  const sourceFiles = viewerFilesSnapshot.length
+    ? viewerFilesSnapshot
+    : filteredFiles;
+  const out = [];
+  const from = Math.max(0, Number(centerIdx) - radius);
+  const to = Math.min(sourceFiles.length - 1, Number(centerIdx) + radius);
+  for (let i = from; i <= to; i += 1) {
+    const f = sourceFiles[i];
+    out.push({
+      idx: i,
+      type: String(f?.type || ""),
+      url: String(f?.url || ""),
+    });
+  }
+  return out;
+}
+function viewerNavCompactWindow(centerIdx, radius = 2) {
+  return viewerNavWindow(centerIdx, radius).map(
+    (x) => `${x.idx}:${x.type}:${String(x.url || "").split("/").pop()}`,
+  );
+}
 function normalizeUrlPath(rawUrl) {
   const raw = String(rawUrl || "").trim();
   if (!raw) return "";
@@ -94,6 +138,7 @@ let vZoom = 1,
   vLastY = 0;
 let currentViewerIdx = 0;
 let currentViewerUrl = "";
+let viewerFilesSnapshot = [];
 let touchStartX = 0,
   touchStartY = 0,
   touchLastX = 0,
@@ -1768,8 +1813,27 @@ document.getElementById("grp-date").classList.add("active");
 // ── VIEWER ────────────────────────────────────────────────────
 function openViewer(idx) {
   viewerIsOpen = true;
-  currentViewerIdx = idx;
-  currentViewerUrl = filteredFiles[idx]?.url || "";
+  const clickedFile = filteredFiles[idx] || null;
+  viewerFilesSnapshot = buildViewerFilesSnapshot();
+  let snapshotIdx = viewerFilesSnapshot.indexOf(clickedFile);
+  if (snapshotIdx < 0 && clickedFile?.url) {
+    snapshotIdx = viewerFilesSnapshot.findIndex((f) => f?.url === clickedFile.url);
+  }
+  if (snapshotIdx < 0) {
+    snapshotIdx =
+      viewerFilesSnapshot.length > 0
+        ? Math.max(0, Math.min(idx, viewerFilesSnapshot.length - 1))
+        : 0;
+  }
+  currentViewerIdx = snapshotIdx;
+  currentViewerUrl =
+    viewerFilesSnapshot[snapshotIdx]?.url || clickedFile?.url || "";
+  viewerNavDbg("openViewer", {
+    idx,
+    selectedUrl: currentViewerUrl,
+    filteredLen: filteredFiles.length,
+    snapshotLen: viewerFilesSnapshot.length,
+  });
   vZoom = 1;
   vOffX = 0;
   vOffY = 0;
@@ -1782,6 +1846,7 @@ function openViewer(idx) {
 function preloadViewerNeighbors(centerIdx) {
   if (!Number.isInteger(centerIdx)) return;
   if (!viewerIsOpen) return;
+  const sourceFiles = viewerFilesSnapshot.length ? viewerFilesSnapshot : filteredFiles;
   preloadManager.reset();
   const targets = [];
   for (let d = 1; d <= PRELOAD_WINDOW; d += 1) {
@@ -1789,7 +1854,7 @@ function preloadViewerNeighbors(centerIdx) {
   }
   let prio = 0;
   for (const idx of targets) {
-    const f = filteredFiles[idx];
+    const f = sourceFiles[idx];
     if (!f) continue;
     if (f.type === "image") {
       const t512 = f.thumb512Url || f.thumbUrl || "";
@@ -1820,19 +1885,31 @@ function preloadViewerNeighbors(centerIdx) {
 }
 
 function renderViewer() {
+  const sourceFiles = viewerFilesSnapshot.length ? viewerFilesSnapshot : filteredFiles;
   if (currentViewerUrl) {
-    const alignedIdx = filteredFiles.findIndex((x) => x?.url === currentViewerUrl);
+    const alignedIdx = sourceFiles.findIndex((x) => x?.url === currentViewerUrl);
+    viewerNavDbg("renderViewer.align", {
+      beforeIdx: currentViewerIdx,
+      alignedIdx,
+      targetUrl: currentViewerUrl,
+    });
     if (alignedIdx >= 0) currentViewerIdx = alignedIdx;
   }
-  const f = filteredFiles[currentViewerIdx];
+  const f = sourceFiles[currentViewerIdx];
   if (!f) return;
+  viewerNavDbg("renderViewer.item", {
+    idx: currentViewerIdx,
+    url: f.url,
+    type: f.type,
+    name: f.name,
+  });
   currentViewerUrl = f.url;
   const viewer = document.getElementById("viewer");
   document.getElementById("viewerName").textContent = f.name;
   document.getElementById("viewerDl").href = toRemoteUrl(f.url);
   document.getElementById("viewerDl").download = f.name;
   document.getElementById("viewerIdx").textContent =
-    `${currentViewerIdx + 1} / ${filteredFiles.length}`;
+    `${currentViewerIdx + 1} / ${sourceFiles.length}`;
   document.getElementById("viewerDate").textContent = prettyDate(f.date);
   document.getElementById("viewerZoomLbl").textContent = "100%";
   updateViewerFavoriteBtn(f);
@@ -2018,7 +2095,13 @@ function closeViewer() {
   viewerPriorityToken += 1;
   viewerPriorityActive = false;
   suspendThumbLoading(false);
+  viewerNavDbg("closeViewer", {
+    lastIdx: currentViewerIdx,
+    lastUrl: currentViewerUrl,
+    snapshotLen: viewerFilesSnapshot.length,
+  });
   currentViewerUrl = "";
+  viewerFilesSnapshot = [];
   livePrepareInFlightKey = "";
   livePrepareLastStartAt = 0;
   livePrepareRetryCount = 0;
@@ -2026,15 +2109,33 @@ function closeViewer() {
 }
 
 function viewerNav(d) {
+  const sourceFiles = viewerFilesSnapshot.length ? viewerFilesSnapshot : filteredFiles;
   let baseIdx = currentViewerIdx;
   if (currentViewerUrl) {
-    const alignedIdx = filteredFiles.findIndex((x) => x?.url === currentViewerUrl);
+    const alignedIdx = sourceFiles.findIndex((x) => x?.url === currentViewerUrl);
     if (alignedIdx >= 0) baseIdx = alignedIdx;
+    viewerNavDbg("viewerNav.align", {
+      dir: d,
+      baseIdxBeforeAlign: currentViewerIdx,
+      alignedIdx,
+      targetUrl: currentViewerUrl,
+    });
   }
-  const n = baseIdx + d;
-  if (n < 0 || n >= filteredFiles.length) return;
+  let n = baseIdx + d;
+  const next = sourceFiles[n] || null;
+  viewerNavDbg("viewerNav.compute", {
+    dir: d,
+    baseIdx,
+    nextIdx: n,
+    inRange: !(n < 0 || n >= sourceFiles.length),
+    nextType: String(next?.type || ""),
+    nextUrl: String(next?.url || ""),
+    aroundBase: viewerNavWindow(baseIdx, 2),
+    aroundCompact: viewerNavCompactWindow(baseIdx, 3),
+  });
+  if (n < 0 || n >= sourceFiles.length) return;
   currentViewerIdx = n;
-  currentViewerUrl = filteredFiles[n]?.url || "";
+  currentViewerUrl = sourceFiles[n]?.url || "";
   vZoom = 1;
   vOffX = 0;
   vOffY = 0;
@@ -2140,6 +2241,9 @@ vStage.addEventListener(
 // Keyboard
 document.addEventListener("keydown", (e) => {
   if (document.getElementById("viewer").style.display === "none") return;
+  if (DEBUG_VIEWER_NAV && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    viewerNavDbg("keydown", { key: e.key });
+  }
   if (e.key === "ArrowLeft") viewerNav(-1);
   if (e.key === "ArrowRight") viewerNav(1);
   if (e.key === "Escape") closeViewer();
@@ -2638,6 +2742,21 @@ function getGridColumns() {
   return Math.max(1, Math.floor((width + 6) / (px + 6)));
 }
 
+function buildViewerFilesSnapshot() {
+  if (virtualState.rows?.length) {
+    const ordered = [];
+    for (const row of virtualState.rows) {
+      if (!row || !Array.isArray(row.files)) continue;
+      if (row.kind !== "grid-row" && row.kind !== "list-item") continue;
+      for (const f of row.files) {
+        if (f) ordered.push(f);
+      }
+    }
+    if (ordered.length) return ordered;
+  }
+  return filteredFiles.slice();
+}
+
 function rebuildVirtualRows() {
   const rows = [];
   const gridCols = layoutMode === "grid" ? getGridColumns() : 1;
@@ -2829,7 +2948,7 @@ function renderVirtualViewport() {
               : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Audio`;
           card.appendChild(badge);
         }
-        const gi = filteredFiles.findIndex((x) => x.url === f.url);
+        const gi = filteredFiles.indexOf(f);
         card.onclick = (e) => {
           if (handleItemSelection(f, e)) return;
           openViewer(gi);
@@ -2866,7 +2985,7 @@ function renderVirtualViewport() {
     }
     if (row.kind === "list-item") {
       const f = row.files[0];
-      const gi = filteredFiles.findIndex((x) => x.url === f.url);
+      const gi = filteredFiles.indexOf(f);
       const el = document.createElement("div");
       el.className = "list-row";
       el.dataset.url = f.url;
@@ -3118,7 +3237,7 @@ function applyFilters(opts = {}) {
   filteredFiles = result.filteredFiles;
   groupMap = result.groupMap;
   groupKeys = result.groupKeys;
-  if (viewerIsOpen && currentViewerUrl) {
+  if (viewerIsOpen && !viewerFilesSnapshot.length && currentViewerUrl) {
     const alignedIdx = filteredFiles.findIndex((x) => x?.url === currentViewerUrl);
     if (alignedIdx >= 0) currentViewerIdx = alignedIdx;
   }

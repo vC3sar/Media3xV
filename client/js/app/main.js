@@ -63,6 +63,7 @@ let vZoom = 1,
   vLastY = 0;
 let currentViewerIdx = 0;
 let currentViewerUrl = "";
+let viewerFilesSnapshot = [];
 let touchStartX = 0,
   touchStartY = 0,
   touchLastX = 0,
@@ -1732,8 +1733,21 @@ document.getElementById("grp-date").classList.add("active");
 // ── VIEWER ────────────────────────────────────────────────────
 function openViewer(idx) {
   viewerIsOpen = true;
-  currentViewerIdx = idx;
-  currentViewerUrl = filteredFiles[idx]?.url || "";
+  const clickedFile = filteredFiles[idx] || null;
+  viewerFilesSnapshot = buildViewerFilesSnapshot();
+  let snapshotIdx = viewerFilesSnapshot.indexOf(clickedFile);
+  if (snapshotIdx < 0 && clickedFile?.url) {
+    snapshotIdx = viewerFilesSnapshot.findIndex((f) => f?.url === clickedFile.url);
+  }
+  if (snapshotIdx < 0) {
+    snapshotIdx =
+      viewerFilesSnapshot.length > 0
+        ? Math.max(0, Math.min(idx, viewerFilesSnapshot.length - 1))
+        : 0;
+  }
+  currentViewerIdx = snapshotIdx;
+  currentViewerUrl =
+    viewerFilesSnapshot[snapshotIdx]?.url || clickedFile?.url || "";
   vZoom = 1;
   vOffX = 0;
   vOffY = 0;
@@ -1746,6 +1760,7 @@ function openViewer(idx) {
 function preloadViewerNeighbors(centerIdx) {
   if (!Number.isInteger(centerIdx)) return;
   if (!viewerIsOpen) return;
+  const sourceFiles = viewerFilesSnapshot.length ? viewerFilesSnapshot : filteredFiles;
   preloadManager.reset();
   const targets = [];
   for (let d = 1; d <= PRELOAD_WINDOW; d += 1) {
@@ -1753,7 +1768,7 @@ function preloadViewerNeighbors(centerIdx) {
   }
   let prio = 0;
   for (const idx of targets) {
-    const f = filteredFiles[idx];
+    const f = sourceFiles[idx];
     if (!f) continue;
     if (f.type === "image") {
       const t512 = f.thumb512Url || f.thumbUrl || "";
@@ -1784,11 +1799,12 @@ function preloadViewerNeighbors(centerIdx) {
 }
 
 function renderViewer() {
+  const sourceFiles = viewerFilesSnapshot.length ? viewerFilesSnapshot : filteredFiles;
   if (currentViewerUrl) {
-    const alignedIdx = filteredFiles.findIndex((x) => x?.url === currentViewerUrl);
+    const alignedIdx = sourceFiles.findIndex((x) => x?.url === currentViewerUrl);
     if (alignedIdx >= 0) currentViewerIdx = alignedIdx;
   }
-  const f = filteredFiles[currentViewerIdx];
+  const f = sourceFiles[currentViewerIdx];
   if (!f) return;
   currentViewerUrl = f.url;
   const viewer = document.getElementById("viewer");
@@ -1796,7 +1812,7 @@ function renderViewer() {
   document.getElementById("viewerDl").href = toRemoteUrl(f.url);
   document.getElementById("viewerDl").download = f.name;
   document.getElementById("viewerIdx").textContent =
-    `${currentViewerIdx + 1} / ${filteredFiles.length}`;
+    `${currentViewerIdx + 1} / ${sourceFiles.length}`;
   document.getElementById("viewerDate").textContent = prettyDate(f.date);
   document.getElementById("viewerZoomLbl").textContent = "100%";
   updateViewerFavoriteBtn(f);
@@ -1983,6 +1999,7 @@ function closeViewer() {
   viewerPriorityActive = false;
   suspendThumbLoading(false);
   currentViewerUrl = "";
+  viewerFilesSnapshot = [];
   livePrepareInFlightKey = "";
   livePrepareLastStartAt = 0;
   livePrepareRetryCount = 0;
@@ -1990,15 +2007,16 @@ function closeViewer() {
 }
 
 function viewerNav(d) {
+  const sourceFiles = viewerFilesSnapshot.length ? viewerFilesSnapshot : filteredFiles;
   let baseIdx = currentViewerIdx;
   if (currentViewerUrl) {
-    const alignedIdx = filteredFiles.findIndex((x) => x?.url === currentViewerUrl);
+    const alignedIdx = sourceFiles.findIndex((x) => x?.url === currentViewerUrl);
     if (alignedIdx >= 0) baseIdx = alignedIdx;
   }
-  const n = baseIdx + d;
-  if (n < 0 || n >= filteredFiles.length) return;
+  let n = baseIdx + d;
+  if (n < 0 || n >= sourceFiles.length) return;
   currentViewerIdx = n;
-  currentViewerUrl = filteredFiles[n]?.url || "";
+  currentViewerUrl = sourceFiles[n]?.url || "";
   vZoom = 1;
   vOffX = 0;
   vOffY = 0;
@@ -2602,6 +2620,21 @@ function getGridColumns() {
   return Math.max(1, Math.floor((width + 6) / (px + 6)));
 }
 
+function buildViewerFilesSnapshot() {
+  if (virtualState.rows?.length) {
+    const ordered = [];
+    for (const row of virtualState.rows) {
+      if (!row || !Array.isArray(row.files)) continue;
+      if (row.kind !== "grid-row" && row.kind !== "list-item") continue;
+      for (const f of row.files) {
+        if (f) ordered.push(f);
+      }
+    }
+    if (ordered.length) return ordered;
+  }
+  return filteredFiles.slice();
+}
+
 function rebuildVirtualRows() {
   const rows = [];
   const gridCols = layoutMode === "grid" ? getGridColumns() : 1;
@@ -2793,7 +2826,7 @@ function renderVirtualViewport() {
               : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Audio`;
           card.appendChild(badge);
         }
-        const gi = filteredFiles.findIndex((x) => x.url === f.url);
+        const gi = filteredFiles.indexOf(f);
         card.onclick = (e) => {
           if (handleItemSelection(f, e)) return;
           openViewer(gi);
@@ -2830,7 +2863,7 @@ function renderVirtualViewport() {
     }
     if (row.kind === "list-item") {
       const f = row.files[0];
-      const gi = filteredFiles.findIndex((x) => x.url === f.url);
+      const gi = filteredFiles.indexOf(f);
       const el = document.createElement("div");
       el.className = "list-row";
       el.dataset.url = f.url;
@@ -3082,7 +3115,7 @@ function applyFilters(opts = {}) {
   filteredFiles = result.filteredFiles;
   groupMap = result.groupMap;
   groupKeys = result.groupKeys;
-  if (viewerIsOpen && currentViewerUrl) {
+  if (viewerIsOpen && !viewerFilesSnapshot.length && currentViewerUrl) {
     const alignedIdx = filteredFiles.findIndex((x) => x?.url === currentViewerUrl);
     if (alignedIdx >= 0) currentViewerIdx = alignedIdx;
   }
