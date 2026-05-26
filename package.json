@@ -1,15 +1,11 @@
 {
   "name": "media3xv-vault",
   "private": true,
-  "type": "module",
   "scripts": {
-    "start": "electron client/electron/main.mjs",
-    "dev": "electron client/electron/main.mjs",
-    "start:server": "node server/server.mjs",
-    "start:cluster": "node server/server.mjs --cluster"
-  },
-  "devDependencies": {
-    "electron": "^33.3.1",
-    "nodemon": "^3.1.10"
+    "start": "npm --prefix client run start",
+    "dev": "npm --prefix client run dev",
+    "start:server": "npm --prefix server run start",
+    "dev:server": "npm --prefix server run dev",
+    "start:cluster": "npm --prefix server run start:cluster"
   }
 }
