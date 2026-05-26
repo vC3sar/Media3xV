@@ -267,6 +267,23 @@ const toUnique = (values) =>
 }
 ```
 
+## File: js/server/features/thumb/handler.mjs
+```javascript
+async function runCommand(command, args)
+⋮----
+function createThumbHandler(ctx)
+⋮----
+function resolveSrc(src)
+⋮----
+async function serveCachedThumb(res, outFile, contentType)
+⋮----
+async function handleVideo(req, res, url)
+⋮----
+async function handleImage(req, res, url)
+⋮----
+async function handleWebImage(req, res, url)
+```
+
 ## File: js/server/features/live/service.mjs
 ```javascript
 function createLiveService(ctx)
@@ -298,23 +315,6 @@ async function handleWebVideo(req, res, url)
 async function handlePrepare(res, url)
 ⋮----
 async function handleStatus(res, url)
-```
-
-## File: js/server/features/thumb/handler.mjs
-```javascript
-async function runCommand(command, args)
-⋮----
-function createThumbHandler(ctx)
-⋮----
-function resolveSrc(src)
-⋮----
-async function serveCachedThumb(res, outFile, contentType)
-⋮----
-async function handleVideo(req, res, url)
-⋮----
-async function handleImage(req, res, url)
-⋮----
-async function handleWebImage(req, res, url)
 ```
 
 ## File: js/server/features/indexing/builders.mjs
@@ -1086,6 +1086,57 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
 </html>
 ```
 
+## File: server.mjs
+```javascript
+async function readConfig()
+⋮----
+async function writeConfig(cfg)
+⋮----
+function json(res, code, payload)
+⋮----
+function nowIso()
+⋮----
+function toBool(value, fallback = false)
+⋮----
+async function pathExists(p)
+⋮----
+function buildFilesystemFingerprintFromIndex(files)
+⋮----
+function sanitizeFilename(name)
+⋮----
+function parseMultipartParts(buffer, boundary)
+⋮----
+function parseContentDisposition(value)
+⋮----
+async function runWithConcurrency(items, limit, worker)
+⋮----
+async function boot()
+⋮----
+const log = (...args) =>
+⋮----
+async function serveFile(req, res, absolutePath)
+⋮----
+async function persistIndex(payload)
+⋮----
+async function loadPersistedIndex()
+⋮----
+async function buildFilesystemQuickFingerprint()
+⋮----
+async function ensureScan()
+⋮----
+function triggerScanDebounced()
+⋮----
+async function triggerScanIfFilesystemChanged(reason = "periodic")
+⋮----
+// Keep service running even if recursive watch is not supported.
+⋮----
+function resolveWorkerCount()
+⋮----
+function shouldUseCluster()
+⋮----
+async function start()
+```
+
 ## File: js/app/main.js
 ```javascript
 class PreloadManager
@@ -1196,6 +1247,8 @@ function setViewerVideoFallback(file, visible)
 function showViewerStaticFromVideo(file, reason = "")
 ⋮----
 function nowMs()
+⋮----
+function needsWebVideoTranscode(file)
 ⋮----
 function setLiveHint(msg = "")
 ⋮----
@@ -1407,55 +1460,4 @@ function scheduleVirtualRender()
 function applyFilters()
 ⋮----
 // ── INIT ──────────────────────────────────────────────────────
-```
-
-## File: server.mjs
-```javascript
-async function readConfig()
-⋮----
-async function writeConfig(cfg)
-⋮----
-function json(res, code, payload)
-⋮----
-function nowIso()
-⋮----
-function toBool(value, fallback = false)
-⋮----
-async function pathExists(p)
-⋮----
-function buildFilesystemFingerprintFromIndex(files)
-⋮----
-function sanitizeFilename(name)
-⋮----
-function parseMultipartParts(buffer, boundary)
-⋮----
-function parseContentDisposition(value)
-⋮----
-async function runWithConcurrency(items, limit, worker)
-⋮----
-async function boot()
-⋮----
-const log = (...args) =>
-⋮----
-async function serveFile(req, res, absolutePath)
-⋮----
-async function persistIndex(payload)
-⋮----
-async function loadPersistedIndex()
-⋮----
-async function buildFilesystemQuickFingerprint()
-⋮----
-async function ensureScan()
-⋮----
-function triggerScanDebounced()
-⋮----
-async function triggerScanIfFilesystemChanged(reason = "periodic")
-⋮----
-// Keep service running even if recursive watch is not supported.
-⋮----
-function resolveWorkerCount()
-⋮----
-function shouldUseCluster()
-⋮----
-async function start()
 ```
