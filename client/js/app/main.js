@@ -211,7 +211,7 @@ function updateViewerFavoriteBtn(file) {
 }
 
 function toggleViewerFavorite() {
-  const f = filteredFiles[currentViewerIdx];
+  const f = getActiveViewerFile();
   if (!f || (f.type !== "image" && f.type !== "video")) return;
   toggleFavorite(f.url);
   updateViewerFavoriteBtn(f);
@@ -1039,7 +1039,7 @@ function fallbackToDirectVideoPlayback(file, videoEl) {
     setLiveHint("No se pudo generar MP4 temporal todavía. Reintentando…");
     livePrepareRetryCount += 1;
     livePrepareRetryTimer = setTimeout(() => {
-      if (filteredFiles[currentViewerIdx]?.url !== file.url) return;
+      if (currentViewerUrl !== file.url) return;
       startLivePrepareAndPoll(file, videoEl, true).catch(() => {});
     }, nextDelay);
     return;
@@ -1071,7 +1071,7 @@ async function startLivePrepareAndPoll(
   if (inFlightNow) return false;
   if (nowMs() - livePrepareLastStartAt < cooldownMs) {
     setTimeout(() => {
-      if (filteredFiles[currentViewerIdx]?.url !== file.url) return;
+      if (currentViewerUrl !== file.url) return;
       if (videoEl.dataset.liveWebReady === "1") return;
       startLivePrepareAndPoll(file, videoEl, autoPlayWhenReady, opts).catch(() => {});
     }, Math.max(350, cooldownMs - Math.floor(nowMs() - livePrepareLastStartAt)));
@@ -1081,7 +1081,7 @@ async function startLivePrepareAndPoll(
   const requestKey = `${file.url}|${versionKey}|${forceTranscode ? "1" : "0"}`;
   if (livePrepareInFlightKey && livePrepareInFlightKey === requestKey) {
     setTimeout(() => {
-      if (filteredFiles[currentViewerIdx]?.url !== file.url) return;
+      if (currentViewerUrl !== file.url) return;
       if (videoEl.dataset.liveWebReady === "1") return;
       startLivePrepareAndPoll(file, videoEl, autoPlayWhenReady, opts).catch(() => {});
     }, 500);
@@ -1137,7 +1137,7 @@ async function startLivePrepareAndPoll(
         const statusRes = await fetch(statusUrl, { cache: "no-store" });
         const statusPayload = await statusRes.json();
         if (!statusRes.ok) return;
-        if (filteredFiles[currentViewerIdx]?.url !== file.url) {
+        if (currentViewerUrl !== file.url) {
           stopLiveStatusPolling();
           setLiveHint("");
           return;
@@ -1197,7 +1197,7 @@ function bindViewerVideoEvents(videoEl) {
   viewerVideoErrBound = true;
 
   videoEl.addEventListener("loadedmetadata", () => {
-    const curr = filteredFiles[currentViewerIdx];
+    const curr = getActiveViewerFile();
     if (!curr || curr.type !== "video") return;
     dbg("viewer video loadedmetadata", {
       url: curr.url,
@@ -1210,7 +1210,7 @@ function bindViewerVideoEvents(videoEl) {
   });
 
   videoEl.addEventListener("canplay", () => {
-    const curr = filteredFiles[currentViewerIdx];
+    const curr = getActiveViewerFile();
     if (!curr || curr.type !== "video") return;
     dbg("viewer video canplay", {
       url: curr.url,
@@ -1228,13 +1228,13 @@ function bindViewerVideoEvents(videoEl) {
   });
 
   videoEl.addEventListener("canplaythrough", () => {
-    const curr = filteredFiles[currentViewerIdx];
+    const curr = getActiveViewerFile();
     if (!curr || curr.type !== "video") return;
     dbg("viewer video canplaythrough", { url: curr.url });
   });
 
   videoEl.addEventListener("playing", () => {
-    const curr = filteredFiles[currentViewerIdx];
+    const curr = getActiveViewerFile();
     if (!curr || curr.type !== "video") return;
     dbg("viewer video playing", {
       url: curr.url,
@@ -1246,7 +1246,7 @@ function bindViewerVideoEvents(videoEl) {
   });
 
   const softRecover = (kind) => {
-    const curr = filteredFiles[currentViewerIdx];
+    const curr = getActiveViewerFile();
     if (!curr || curr.type !== "video") return;
     // For live photos, avoid play/wait loops before the web-ready video is prepared.
     if (needsWebVideoTranscode(curr) && videoEl.dataset.liveWebReady !== "1") return;
@@ -1260,7 +1260,7 @@ function bindViewerVideoEvents(videoEl) {
   videoEl.addEventListener("stalled", () => softRecover("stalled"));
 
   videoEl.addEventListener("error", () => {
-    const curr = filteredFiles[currentViewerIdx];
+    const curr = getActiveViewerFile();
     if (!curr || curr.type !== "video") return;
     if (
       !needsWebVideoTranscode(curr) &&
@@ -1292,7 +1292,7 @@ function bindViewerVideoEvents(videoEl) {
   if (!viewerLivePlayBound) {
     viewerLivePlayBound = true;
     videoEl.addEventListener("play", () => {
-      const curr = filteredFiles[currentViewerIdx];
+      const curr = getActiveViewerFile();
       if (!curr || curr.type !== "video") return;
       if (!needsWebVideoTranscode(curr)) return;
       if (videoEl.dataset.liveWebReady === "1") return;
@@ -1798,14 +1798,32 @@ function preloadViewerNeighbors(centerIdx) {
   }
 }
 
+function getActiveViewerFile() {
+  const sourceFiles = viewerFilesSnapshot.length ? viewerFilesSnapshot : filteredFiles;
+  if (currentViewerUrl) {
+    const byUrl = sourceFiles.find((x) => x?.url === currentViewerUrl);
+    if (byUrl) return byUrl;
+  }
+  return sourceFiles[currentViewerIdx] || null;
+}
+
 function renderViewer() {
   const sourceFiles = viewerFilesSnapshot.length ? viewerFilesSnapshot : filteredFiles;
+  if (!sourceFiles.length) {
+    closeViewer();
+    return;
+  }
   if (currentViewerUrl) {
     const alignedIdx = sourceFiles.findIndex((x) => x?.url === currentViewerUrl);
     if (alignedIdx >= 0) currentViewerIdx = alignedIdx;
   }
+  if (currentViewerIdx < 0) currentViewerIdx = 0;
+  if (currentViewerIdx >= sourceFiles.length) currentViewerIdx = sourceFiles.length - 1;
   const f = sourceFiles[currentViewerIdx];
-  if (!f) return;
+  if (!f) {
+    closeViewer();
+    return;
+  }
   currentViewerUrl = f.url;
   const viewer = document.getElementById("viewer");
   document.getElementById("viewerName").textContent = f.name;
@@ -1872,7 +1890,7 @@ function renderViewer() {
         retryDelayMs: 220,
       })
         .then((loaded) => {
-          if (filteredFiles[currentViewerIdx]?.url !== f.url) return false;
+          if (currentViewerUrl !== f.url) return false;
           img.style.opacity = "1";
           img.src = loaded.src;
           img.style.visibility = "visible";
@@ -1884,7 +1902,7 @@ function renderViewer() {
           return true;
         })
         .catch(() => {
-          if (filteredFiles[currentViewerIdx]?.url !== f.url) return false;
+          if (currentViewerUrl !== f.url) return false;
           if (attempt >= 2) {
             endViewerPriorityLoad(loadToken, true);
             if (img.dataset.viewerQuality !== "low")
@@ -1902,7 +1920,7 @@ function renderViewer() {
           retryDelayMs: 120,
         })
           .then((loaded) => {
-            if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
+            if (currentViewerUrl !== f.url) return;
             img.style.opacity = "0.92";
             img.src = loaded.src;
             img.style.visibility = "visible";
@@ -1920,7 +1938,7 @@ function renderViewer() {
         retryDelayMs: 120,
       })
         .then((loaded) => {
-          if (filteredFiles[currentViewerIdx]?.url !== f.url) return;
+          if (currentViewerUrl !== f.url) return;
           img.style.opacity = "0.85";
           img.src = loaded.src;
           img.style.visibility = "visible";
@@ -2075,7 +2093,7 @@ vStage.addEventListener(
   (e) => {
     if (window.innerWidth > 768) return;
     if (document.getElementById("viewer").style.display === "none") return;
-    const f = filteredFiles[currentViewerIdx];
+    const f = getActiveViewerFile();
     if (!f || f.type !== "image") return;
     const t = e.changedTouches?.[0];
     if (!t) return;
@@ -3210,3 +3228,4 @@ Object.assign(window, {
     }
   }
 })();
+

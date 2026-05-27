@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node server.mjs",
     "start:cluster": "node server.mjs --cluster",
-    "dev": "nodemon --watch . --ignore '../.thumb-cache/**' --ignore '../.temp_livephotos/**' --ignore '../.git/**' --ignore '../node_modules/**' server.mjs"
+    "dev": "nodemon --watch . --ignore 'media-index.json' --ignore '../.thumb-cache/**' --ignore '../.temp_livephotos/**' --ignore '../.git/**' --ignore '../node_modules/**' server.mjs"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
