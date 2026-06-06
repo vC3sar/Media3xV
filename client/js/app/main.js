@@ -4,6 +4,7 @@ import {
   CACHE_CLEANUP_URL,
   CACHE_STATS_URL,
   UPLOAD_URL,
+  UPDATE_MEDIA_DATE_URL,
   DELETE_URL,
   PARTITIONS_URL,
   REINDEX_PARTITION_URL,
@@ -167,6 +168,8 @@ const preloadManager = new PreloadManager({ maxConcurrent: 2 });
 let selectionMode = false;
 let selectedUrls = new Set();
 let lastSelectedUrl = "";
+let deleteSelection = [];
+let dateEditSelection = [];
 
 function videoTaskKey(src, mode = "thumb") {
   return `video:${mode}:${src}`;
@@ -223,6 +226,8 @@ function updateSelectionUI() {
   const modeLbl = document.getElementById("selectModeLbl");
   const delBtn = document.getElementById("deleteSelectedBtn");
   const delLbl = document.getElementById("deleteSelectedLbl");
+  const fixBtn = document.getElementById("fixSelectedBtn");
+  const fixLbl = document.getElementById("fixSelectedLbl");
   const chip = document.getElementById("selectionChip");
   const chipText = document.getElementById("selectionChipText");
   if (modeBtn) modeBtn.classList.toggle("active", selectionMode);
@@ -230,6 +235,12 @@ function updateSelectionUI() {
     modeLbl.textContent = selectionMode ? "Seleccionando" : "Seleccionar";
   if (delBtn) delBtn.style.display = selectionMode ? "flex" : "none";
   if (delLbl) delLbl.textContent = `Eliminar (${selectedUrls.size})`;
+  if (fixBtn) fixBtn.style.display = selectionMode ? "flex" : "none";
+  if (fixLbl)
+    fixLbl.textContent =
+      selectedUrls.size > 1
+        ? `Corregir fecha (${selectedUrls.size})`
+        : "Corregir fecha";
   if (chip) chip.style.display = selectionMode ? "inline-flex" : "none";
   if (chipText)
     chipText.textContent = `${selectedUrls.size} seleccionado${selectedUrls.size === 1 ? "" : "s"}`;
@@ -313,12 +324,54 @@ async function deleteSelectedFiles() {
     toast("No hay archivos seleccionados");
     return;
   }
-  const count = selectedUrls.size;
-  const ok = window.confirm(
-    `¿Eliminar ${count} archivo${count !== 1 ? "s" : ""} de la lista actual?`,
-  );
-  if (!ok) return;
-  const urls = Array.from(selectedUrls);
+  openDeleteConfirmModal(getSelectedFiles());
+}
+
+function closeDeleteConfirmModal() {
+  const modal = document.getElementById("deleteConfirmModal");
+  if (modal) modal.style.display = "none";
+  deleteSelection = [];
+}
+
+function openDeleteConfirmModal(selectedFiles) {
+  const modal = document.getElementById("deleteConfirmModal");
+  const count = document.getElementById("deleteConfirmCount");
+  const list = document.getElementById("deleteConfirmList");
+  if (!modal || !count || !list) return;
+  deleteSelection = Array.isArray(selectedFiles) ? [...selectedFiles] : [];
+  count.textContent =
+    `${deleteSelection.length} archivo${deleteSelection.length === 1 ? "" : "s"} seleccionados`;
+  const preview = deleteSelection.slice(0, 8);
+  list.innerHTML = "";
+  for (const file of preview) {
+    const row = document.createElement("div");
+    row.style.cssText =
+      "display:flex;align-items:center;gap:8px;min-width:0;padding:2px 0;";
+    row.innerHTML = `
+      <span style="width:6px;height:6px;border-radius:999px;background:#ff8c8c;flex:none;"></span>
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${file.name || file.url || "Archivo"}</span>
+    `;
+    list.appendChild(row);
+  }
+  if (deleteSelection.length > preview.length) {
+    const more = document.createElement("div");
+    more.style.cssText = "color:var(--muted);font-size:11px;";
+    more.textContent = `y ${deleteSelection.length - preview.length} más...`;
+    list.appendChild(more);
+  }
+  modal.style.display = "block";
+}
+
+async function submitDeleteConfirmModal() {
+  if (!selectionMode) return;
+  const selectedFiles = deleteSelection.length
+    ? deleteSelection
+    : getSelectedFiles();
+  if (!selectedFiles.length) {
+    toast("No hay archivos seleccionados");
+    return;
+  }
+  const urls = selectedFiles.map((f) => f.url);
   try {
     const res = await fetch(DELETE_URL, {
       method: "POST",
@@ -348,9 +401,109 @@ async function deleteSelectedFiles() {
         4200,
       );
     }
+    closeDeleteConfirmModal();
   } catch (err) {
     toast(`No se pudo eliminar: ${err.message}`, 4200);
   }
+}
+
+function getSelectedFiles() {
+  const byUrl = new Map(allFiles.map((f) => [f?.url, f]));
+  return Array.from(selectedUrls)
+    .map((url) => byUrl.get(url))
+    .filter(Boolean);
+}
+
+function closeDateEditModal() {
+  const modal = document.getElementById("dateEditModal");
+  if (modal) modal.style.display = "none";
+  dateEditSelection = [];
+}
+
+function openDateEditModal(selectedFiles) {
+  const modal = document.getElementById("dateEditModal");
+  const input = document.getElementById("dateEditInput");
+  const count = document.getElementById("dateEditCount");
+  if (!modal || !input || !count) return;
+  dateEditSelection = Array.isArray(selectedFiles) ? [...selectedFiles] : [];
+  const validDates = dateEditSelection
+    .map((f) => String(f?.date || "").trim())
+    .filter((d) => isValidFullDateString(d));
+  const sameDate =
+    validDates.length > 0 && validDates.every((d) => d === validDates[0]);
+  const defaultDate = sameDate ? validDates[0] : todayDateString();
+  count.textContent =
+    `${dateEditSelection.length} archivo${dateEditSelection.length === 1 ? "" : "s"} seleccionados`;
+  input.value = defaultDate;
+  modal.style.display = "block";
+  setTimeout(() => input.focus(), 0);
+}
+
+async function submitDateEditModal() {
+  if (!selectionMode) return;
+  const selectedFiles = dateEditSelection.length
+    ? dateEditSelection
+    : getSelectedFiles();
+  if (!selectedFiles.length) {
+    toast("No hay archivos seleccionados");
+    return;
+  }
+  const input = document.getElementById("dateEditInput");
+  const date = String(input?.value || "").trim();
+  if (!date) return;
+  if (!isValidFullDateString(date)) {
+    toast("Fecha inválida. Usa YYYY-MM-DD.");
+    return;
+  }
+  const today = todayDateString();
+  if (date > today) {
+    toast("La fecha no puede ser futura.");
+    return;
+  }
+  const btn = document.getElementById("fixSelectedBtn");
+  const prevDisabled = btn?.disabled || false;
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(UPDATE_MEDIA_DATE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        urls: selectedFiles.map((f) => f.url),
+        date,
+      }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+    toast(
+      `Fecha actualizada en ${payload.updated || selectedFiles.length} archivo${(payload.updated || selectedFiles.length) === 1 ? "" : "s"}. Reindexando...`,
+      3200,
+    );
+    try {
+      const idx = await loadIndex();
+      if (idx.version !== currentIndexVersion) {
+        currentIndexVersion = idx.version;
+        applyNewFileSet(idx.files, "poll");
+      }
+    } catch (_) {
+      // polling will refresh when index is ready
+    }
+    refreshVisibleSelectionState();
+    closeDateEditModal();
+  } catch (err) {
+    toast(`No se pudo corregir la fecha: ${err.message}`, 4200);
+  } finally {
+    if (btn) btn.disabled = prevDisabled;
+  }
+}
+
+async function editSelectedDate() {
+  if (!selectionMode) return;
+  const selectedFiles = getSelectedFiles();
+  if (!selectedFiles.length) {
+    toast("No hay archivos seleccionados");
+    return;
+  }
+  openDateEditModal(selectedFiles);
 }
 
 function queueVideoThumbLoad(el, src) {
@@ -649,6 +802,39 @@ function enforceMobileGridSize() {
 window.addEventListener("resize", enforceMobileGridSize);
 
 // ── DATE GUESS ───────────────────────────────────────────────
+function todayDateString() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function isValidFullDateString(dateStr) {
+  const src = String(dateStr || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(src)) return false;
+  const [yRaw, mRaw, dRaw] = src.split("-");
+  const year = Number(yRaw);
+  const month = Number(mRaw);
+  const day = Number(dRaw);
+  if (!Number.isInteger(year) || year < 1) return false;
+  if (!Number.isInteger(month) || month < 1 || month > 12) return false;
+  if (!Number.isInteger(day) || day < 1 || day > 31) return false;
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  return (
+    dt.getUTCFullYear() === year &&
+    dt.getUTCMonth() === month - 1 &&
+    dt.getUTCDate() === day
+  );
+}
+
+function clampDateToToday(dateStr) {
+  const src = String(dateStr || "").trim();
+  if (!isValidFullDateString(src)) return todayDateString();
+  const today = todayDateString();
+  return src > today ? today : src;
+}
+
 function guessDate(name, path) {
   const text = decodeURIComponent(name + " " + path);
   let m = text.match(/(20\d{2})[-_]?(\d{2})[-_]?(\d{2})/);
@@ -1305,15 +1491,18 @@ function bindViewerVideoEvents(videoEl) {
 function normalizeDate(dateStr, fallbackName, fallbackUrl) {
   const src = (dateStr || "").trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(src)) {
-    const [, mmRaw, ddRaw] = src.split("-");
-    const mm = Number(mmRaw);
-    const dd = Number(ddRaw);
-    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31)
-      return { value: src, fallback: false };
+    const value = clampDateToToday(src);
+    return { value, fallback: value !== src };
   }
-  if (/^\d{4}-XX-XX$/.test(src)) return { value: src, fallback: false };
-  const fallback = guessDate(fallbackName || "", fallbackUrl || "");
-  return { value: fallback, fallback: true };
+  const yearOnly = src.match(/^(\d{4})-XX-XX$/);
+  if (yearOnly) {
+    const year = Number(yearOnly[1]);
+    if (Number.isFinite(year) && year > new Date().getFullYear()) {
+      return { value: todayDateString(), fallback: true };
+    }
+    return { value: src, fallback: false };
+  }
+  return { value: todayDateString(), fallback: true };
 }
 
 function normalizeIndexedFile(f) {
@@ -3167,6 +3356,11 @@ Object.assign(window, {
   toggleLayout,
   toggleSelectMode,
   deleteSelectedFiles,
+  closeDeleteConfirmModal,
+  submitDeleteConfirmModal,
+  editSelectedDate,
+  closeDateEditModal,
+  submitDateEditModal,
   setTypeFilter,
   setGroup,
   stepZoom,

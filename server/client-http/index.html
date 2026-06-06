@@ -756,6 +756,49 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
 <!-- TOAST -->
 <div id="toast"></div>
 
+<!-- DELETE CONFIRM MODAL -->
+<div id="deleteConfirmModal" style="display:none;position:fixed;inset:0;z-index:87;background:rgba(0,0,0,.7);backdrop-filter:blur(2px);">
+  <div style="max-width:520px;width:calc(100% - 24px);margin:14vh auto;background:linear-gradient(180deg, rgba(34,18,18,.98), rgba(18,14,14,.98));border:1px solid rgba(220,80,80,.35);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(0,0,0,.45);">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(220,80,80,.22);">
+      <strong style="font-size:13px;color:#ffb7b7;">Eliminar seleccionadas</strong>
+      <button class="tbtn" onclick="closeDeleteConfirmModal()">Cerrar</button>
+    </div>
+    <div style="padding:14px;display:flex;flex-direction:column;gap:12px;">
+      <div style="font-size:12px;color:var(--muted-l);line-height:1.45;">
+        <div id="deleteConfirmCount" style="font-family:var(--mono);color:var(--text);margin-bottom:6px;">0 archivos</div>
+        <div>Esta acción elimina los archivos de la lista actual y no se puede deshacer desde aquí.</div>
+      </div>
+      <div id="deleteConfirmList" style="max-height:160px;overflow:auto;border:1px solid rgba(220,80,80,.18);background:rgba(0,0,0,.18);border-radius:10px;padding:10px;font-size:12px;color:var(--muted-l);display:flex;flex-direction:column;gap:6px;"></div>
+      <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;">
+        <button class="tbtn" onclick="closeDeleteConfirmModal()">Cancelar</button>
+        <button class="tbtn" style="background:rgba(220,80,80,.18);border-color:rgba(220,80,80,.35);color:#ffb7b7;" onclick="submitDeleteConfirmModal()">Eliminar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DATE EDIT MODAL -->
+<div id="dateEditModal" style="display:none;position:fixed;inset:0;z-index:86;background:rgba(0,0,0,.68);backdrop-filter:blur(2px);">
+  <div style="max-width:520px;width:calc(100% - 24px);margin:14vh auto;background:linear-gradient(180deg, rgba(24,28,36,.98), rgba(14,18,24,.98));border:1px solid var(--border);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(0,0,0,.45);">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);">
+      <strong style="font-size:13px;">Corregir fecha</strong>
+      <button class="tbtn" onclick="closeDateEditModal()">Cerrar</button>
+    </div>
+    <div style="padding:14px;display:flex;flex-direction:column;gap:12px;">
+      <div style="font-size:12px;color:var(--muted-l);line-height:1.45;">
+        <div id="dateEditCount" style="font-family:var(--mono);color:var(--text);margin-bottom:6px;">0 archivos</div>
+        <div>Escribe una fecha válida en formato <span style="font-family:var(--mono);color:var(--text);">YYYY-MM-DD</span>. Las fechas futuras se bloquean.</div>
+      </div>
+      <label for="dateEditInput" style="font-size:12px;color:var(--muted-l);">Nueva fecha</label>
+      <input id="dateEditInput" type="date" style="width:100%;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-family:var(--mono);font-size:13px;outline:none;">
+      <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;">
+        <button class="tbtn" onclick="closeDateEditModal()">Cancelar</button>
+        <button class="tbtn active" onclick="submitDateEditModal()">Guardar cambio</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- CONFIG MODAL -->
 <div id="cfgModal" style="display:none;position:fixed;inset:0;z-index:85;background:rgba(0,0,0,.65);backdrop-filter:blur(2px);">
   <div style="max-width:680px;max-height:84vh;margin:8vh auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;">

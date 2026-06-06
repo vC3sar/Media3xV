@@ -243,6 +243,8 @@ const preloadManager = new PreloadManager({ maxConcurrent: 2 });
 let selectionMode = false;
 let selectedUrls = new Set();
 let lastSelectedUrl = "";
+let deleteSelection = [];
+let dateEditSelection = [];
 
 function videoTaskKey(src, mode = "thumb") {
   return `video:${mode}:${src}`;
@@ -397,12 +399,54 @@ async function deleteSelectedFiles() {
     toast("No hay archivos seleccionados");
     return;
   }
-  const count = selectedUrls.size;
-  const ok = window.confirm(
-    `¿Eliminar ${count} archivo${count !== 1 ? "s" : ""} de la lista actual?`,
-  );
-  if (!ok) return;
-  const urls = Array.from(selectedUrls);
+  openDeleteConfirmModal(getSelectedFiles());
+}
+
+function closeDeleteConfirmModal() {
+  const modal = document.getElementById("deleteConfirmModal");
+  if (modal) modal.style.display = "none";
+  deleteSelection = [];
+}
+
+function openDeleteConfirmModal(selectedFiles) {
+  const modal = document.getElementById("deleteConfirmModal");
+  const count = document.getElementById("deleteConfirmCount");
+  const list = document.getElementById("deleteConfirmList");
+  if (!modal || !count || !list) return;
+  deleteSelection = Array.isArray(selectedFiles) ? [...selectedFiles] : [];
+  count.textContent =
+    `${deleteSelection.length} archivo${deleteSelection.length === 1 ? "" : "s"} seleccionados`;
+  const preview = deleteSelection.slice(0, 8);
+  list.innerHTML = "";
+  for (const file of preview) {
+    const row = document.createElement("div");
+    row.style.cssText =
+      "display:flex;align-items:center;gap:8px;min-width:0;padding:2px 0;";
+    row.innerHTML = `
+      <span style="width:6px;height:6px;border-radius:999px;background:#ff8c8c;flex:none;"></span>
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${file.name || file.url || "Archivo"}</span>
+    `;
+    list.appendChild(row);
+  }
+  if (deleteSelection.length > preview.length) {
+    const more = document.createElement("div");
+    more.style.cssText = "color:var(--muted);font-size:11px;";
+    more.textContent = `y ${deleteSelection.length - preview.length} más...`;
+    list.appendChild(more);
+  }
+  modal.style.display = "block";
+}
+
+async function submitDeleteConfirmModal() {
+  if (!selectionMode) return;
+  const selectedFiles = deleteSelection.length
+    ? deleteSelection
+    : getSelectedFiles();
+  if (!selectedFiles.length) {
+    toast("No hay archivos seleccionados");
+    return;
+  }
+  const urls = selectedFiles.map((f) => f.url);
   try {
     const res = await fetch(DELETE_URL, {
       method: "POST",
@@ -432,6 +476,7 @@ async function deleteSelectedFiles() {
         4200,
       );
     }
+    closeDeleteConfirmModal();
   } catch (err) {
     toast(`No se pudo eliminar: ${err.message}`, 4200);
   }
@@ -444,24 +489,42 @@ function getSelectedFiles() {
     .filter(Boolean);
 }
 
-async function editSelectedDate() {
-  if (!selectionMode) return;
-  const selectedFiles = getSelectedFiles();
-  if (!selectedFiles.length) {
-    toast("No hay archivos seleccionados");
-    return;
-  }
-  const validDates = selectedFiles
+function closeDateEditModal() {
+  const modal = document.getElementById("dateEditModal");
+  if (modal) modal.style.display = "none";
+  dateEditSelection = [];
+}
+
+function openDateEditModal(selectedFiles) {
+  const modal = document.getElementById("dateEditModal");
+  const input = document.getElementById("dateEditInput");
+  const count = document.getElementById("dateEditCount");
+  if (!modal || !input || !count) return;
+  dateEditSelection = Array.isArray(selectedFiles) ? [...selectedFiles] : [];
+  const validDates = dateEditSelection
     .map((f) => String(f?.date || "").trim())
     .filter((d) => isValidFullDateString(d));
   const sameDate =
     validDates.length > 0 && validDates.every((d) => d === validDates[0]);
   const defaultDate = sameDate ? validDates[0] : todayDateString();
-  const inputDate = window.prompt(
-    `Nueva fecha para ${selectedFiles.length} archivo${selectedFiles.length === 1 ? "" : "s"} (YYYY-MM-DD):`,
-    defaultDate,
-  );
-  const date = String(inputDate || "").trim();
+  count.textContent =
+    `${dateEditSelection.length} archivo${dateEditSelection.length === 1 ? "" : "s"} seleccionados`;
+  input.value = defaultDate;
+  modal.style.display = "block";
+  setTimeout(() => input.focus(), 0);
+}
+
+async function submitDateEditModal() {
+  if (!selectionMode) return;
+  const selectedFiles = dateEditSelection.length
+    ? dateEditSelection
+    : getSelectedFiles();
+  if (!selectedFiles.length) {
+    toast("No hay archivos seleccionados");
+    return;
+  }
+  const input = document.getElementById("dateEditInput");
+  const date = String(input?.value || "").trim();
   if (!date) return;
   if (!isValidFullDateString(date)) {
     toast("Fecha inválida. Usa YYYY-MM-DD.");
@@ -500,11 +563,22 @@ async function editSelectedDate() {
       // polling will refresh when index is ready
     }
     refreshVisibleSelectionState();
+    closeDateEditModal();
   } catch (err) {
     toast(`No se pudo corregir la fecha: ${err.message}`, 4200);
   } finally {
     if (btn) btn.disabled = prevDisabled;
   }
+}
+
+async function editSelectedDate() {
+  if (!selectionMode) return;
+  const selectedFiles = getSelectedFiles();
+  if (!selectedFiles.length) {
+    toast("No hay archivos seleccionados");
+    return;
+  }
+  openDateEditModal(selectedFiles);
 }
 
 function queueVideoThumbLoad(el, src) {
@@ -3404,7 +3478,11 @@ Object.assign(window, {
   toggleLayout,
   toggleSelectMode,
   deleteSelectedFiles,
+  closeDeleteConfirmModal,
+  submitDeleteConfirmModal,
   editSelectedDate,
+  closeDateEditModal,
+  submitDateEditModal,
   setTypeFilter,
   setGroup,
   stepZoom,
