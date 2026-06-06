@@ -8,10 +8,13 @@ import {
   dedupeMixedImagesByFingerprint,
   entryLabelFromAutoindexRoot,
   entryLabelFromFilesystemRoot,
+  isFutureFullDateString,
   guessDateDetailed,
   parseAutoindexLinks,
   toFileNameFromUrl,
   toPosix,
+  todayDateString,
+  isValidFullDateString,
 } from "../../shared/media-utils.mjs";
 
 async function walk(fs, dir, out = []) {
@@ -223,6 +226,21 @@ function monthFromMtimeMs(mtimeMs) {
   return `${y}-${m}`;
 }
 
+function resolveIndexedDate(dateInfo, now = new Date()) {
+  const today = todayDateString(now);
+  const raw = String(dateInfo?.date || "").trim();
+  if (isValidFullDateString(raw)) {
+    return isFutureFullDateString(raw, now) ? today : raw;
+  }
+  const yearOnly = raw.match(/^(\d{4})-XX-XX$/);
+  if (yearOnly) {
+    const year = Number(yearOnly[1]);
+    if (Number.isFinite(year) && year > now.getFullYear()) return today;
+    return raw;
+  }
+  return today;
+}
+
 async function buildFilesystemIndex(ctx) {
   const {
     fs,
@@ -232,6 +250,7 @@ async function buildFilesystemIndex(ctx) {
     detectLivePhotos,
     getPreviousIndex,
     getForcedPartitions,
+    getDateOverrideForUrl,
     log,
   } = ctx;
   const files = [];
@@ -255,6 +274,7 @@ async function buildFilesystemIndex(ctx) {
   }
   let rebuiltPartitions = 0;
   let reusedPartitions = 0;
+  const now = new Date();
   for (let rootIdx = 0; rootIdx < mediaRoots.length; rootIdx += 1) {
     const mediaRoot = mediaRoots[rootIdx];
     const entryId = `fs:${rootIdx}`;
@@ -306,81 +326,89 @@ async function buildFilesystemIndex(ctx) {
       const built = [];
       for (const e of entries) {
         const { abs, rel, type, st, folderGroup } = e;
-      const name = decodeURIComponent(path.basename(rel));
-      const dateInfo = guessDateDetailed(name, rel);
-      let resolvedDate = dateInfo.date;
-      let datePatched = dateInfo.patched;
-      if (resolvedDate === "0000-sin-fecha") {
-        const exifDate = await probeImageExifDateFallback(abs);
-        if (exifDate) {
-          resolvedDate = exifDate;
-          datePatched = false;
+        const name = decodeURIComponent(path.basename(rel));
+        const dateInfo = guessDateDetailed(name, rel);
+        const mediaSrc = `/media/${rootIdx}/${encodePathForUrl(rel)}`;
+        const overrideDate =
+          typeof getDateOverrideForUrl === "function"
+            ? getDateOverrideForUrl(mediaSrc)
+            : "";
+        let resolvedDate = resolveIndexedDate(
+          overrideDate ? { date: overrideDate } : dateInfo,
+          now,
+        );
+        let datePatched = Boolean(dateInfo.patched) && !overrideDate;
+        if (!overrideDate && dateInfo.date === "0000-sin-fecha") {
+          const exifDate = await probeImageExifDateFallback(abs);
+          if (exifDate) {
+            resolvedDate = resolveIndexedDate({ date: exifDate }, now);
+            datePatched = false;
+          }
         }
-      }
-      const mediaSrc = `/media/${rootIdx}/${encodePathForUrl(rel)}`;
-      const dims = fastIndexMode
-        ? { width: null, height: null }
-        : await probeDimensions(abs);
-      if (type === "image") {
-        if (!fastIndexMode) {
-          await ensureImageThumbFilesystem(ctx, mediaSrc, st.mtimeMs, abs, 128);
-          await ensureImageThumbFilesystem(ctx, mediaSrc, st.mtimeMs, abs, 512);
+        const dims = fastIndexMode
+          ? { width: null, height: null }
+          : await probeDimensions(abs);
+        if (type === "image") {
+          if (!fastIndexMode) {
+            await ensureImageThumbFilesystem(ctx, mediaSrc, st.mtimeMs, abs, 128);
+            await ensureImageThumbFilesystem(ctx, mediaSrc, st.mtimeMs, abs, 512);
+          }
         }
+        const liveMeta =
+          type === "video" && detectLivePhotos
+            ? await detectLivePhotoFilesystem(abs)
+            : null;
+        const thumb128Url =
+          type === "image"
+            ? `/thumb/image?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}&size=128`
+            : null;
+        const thumb512Url =
+          type === "image"
+            ? `/thumb/image?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}&size=512`
+            : null;
+        files.push({
+          id: createHash("sha1").update(mediaSrc).digest("hex").slice(0, 16),
+          url: mediaSrc,
+          name,
+          type,
+          date: resolvedDate,
+          dateGroup: deriveDateGroup(resolvedDate, st.mtimeMs),
+          dateSortKey: normalizeDateSortKey(resolvedDate, st.mtimeMs),
+          folderGroup,
+          datePatched,
+          dateOverridden: Boolean(overrideDate),
+          width: dims.width,
+          height: dims.height,
+          size: st.size,
+          mtimeMs: Math.floor(st.mtimeMs),
+          thumbUrl:
+            type === "video"
+              ? `/thumb/video?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}`
+              : type === "image"
+                ? thumb512Url
+                : null,
+          thumb128Url,
+          thumb512Url,
+          livePhoto: liveMeta
+            ? {
+                enabled: true,
+                photoUrl:
+                  liveMeta.stillPath &&
+                  path.resolve(liveMeta.stillPath).startsWith(mediaRoot)
+                    ? `/media/${rootIdx}/${encodePathForUrl(
+                        toPosix(path.relative(mediaRoot, liveMeta.stillPath)),
+                      )}`
+                    : null,
+                videoUrl: mediaSrc,
+                snapshotUrl: `/live/snapshot?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}`,
+                webVideoUrl: `/live/web-video?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}`,
+              }
+            : null,
+          entryId,
+          entryLabel,
+          partitionKey,
+        });
       }
-      const liveMeta =
-        type === "video" && detectLivePhotos
-          ? await detectLivePhotoFilesystem(abs)
-          : null;
-      const thumb128Url =
-        type === "image"
-          ? `/thumb/image?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}&size=128`
-          : null;
-      const thumb512Url =
-        type === "image"
-          ? `/thumb/image?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}&size=512`
-          : null;
-      files.push({
-        id: createHash("sha1").update(mediaSrc).digest("hex").slice(0, 16),
-        url: mediaSrc,
-        name,
-        type,
-        date: resolvedDate,
-        dateGroup: deriveDateGroup(resolvedDate, st.mtimeMs),
-        dateSortKey: normalizeDateSortKey(resolvedDate, st.mtimeMs),
-        folderGroup,
-        datePatched,
-        width: dims.width,
-        height: dims.height,
-        size: st.size,
-        mtimeMs: Math.floor(st.mtimeMs),
-        thumbUrl:
-          type === "video"
-            ? `/thumb/video?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}`
-            : type === "image"
-              ? thumb512Url
-              : null,
-        thumb128Url,
-        thumb512Url,
-        livePhoto: liveMeta
-          ? {
-              enabled: true,
-              photoUrl:
-                liveMeta.stillPath &&
-                path.resolve(liveMeta.stillPath).startsWith(mediaRoot)
-                  ? `/media/${rootIdx}/${encodePathForUrl(
-                      toPosix(path.relative(mediaRoot, liveMeta.stillPath)),
-                    )}`
-                  : null,
-              videoUrl: mediaSrc,
-              snapshotUrl: `/live/snapshot?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}`,
-              webVideoUrl: `/live/web-video?src=${encodeURIComponent(mediaSrc)}&v=${Math.floor(st.mtimeMs)}`,
-            }
-          : null,
-        entryId,
-        entryLabel,
-        partitionKey,
-      });
-    }
       files.push(...built);
       partitionMeta[partitionKey] = {
         fingerprint,
@@ -395,7 +423,7 @@ async function buildFilesystemIndex(ctx) {
 }
 
 async function buildAutoindexIndex(ctx) {
-  const { autoindexRootUrls, log } = ctx;
+  const { autoindexRootUrls, log, getDateOverrideForUrl } = ctx;
   const files = [];
   for (let rootIdx = 0; rootIdx < autoindexRootUrls.length; rootIdx += 1) {
     const rootUrl = autoindexRootUrls[rootIdx];
@@ -432,6 +460,14 @@ async function buildAutoindexIndex(ctx) {
         if (!type) continue;
         const name = toFileNameFromUrl(url.href);
         const dateInfo = guessDateDetailed(name, url.pathname);
+        const overrideDate =
+          typeof getDateOverrideForUrl === "function"
+            ? getDateOverrideForUrl(url.href)
+            : "";
+        const resolvedDate = resolveIndexedDate(
+          overrideDate ? { date: overrideDate } : dateInfo,
+          new Date(),
+        );
         const folderFromUrl = toPosix(path.posix.dirname(url.pathname)).replace(
           /^\/+/,
           "",
@@ -446,11 +482,12 @@ async function buildAutoindexIndex(ctx) {
           url: url.href,
           name,
           type,
-          date: dateInfo.date,
-          dateGroup: deriveDateGroup(dateInfo.date, 0),
-          dateSortKey: normalizeDateSortKey(dateInfo.date, 0),
+          date: resolvedDate,
+          dateGroup: deriveDateGroup(resolvedDate, 0),
+          dateSortKey: normalizeDateSortKey(resolvedDate, 0),
           folderGroup,
-          datePatched: dateInfo.patched,
+          datePatched: Boolean(dateInfo.patched) && !overrideDate,
+          dateOverridden: Boolean(overrideDate),
           width: null,
           height: null,
           size: 0,

@@ -10,6 +10,7 @@ export const CONFIG_URL = withBase("/api/config");
 export const CACHE_CLEANUP_URL = withBase("/api/cache-cleanup");
 export const CACHE_STATS_URL = withBase("/api/cache-stats");
 export const UPLOAD_URL = withBase("/api/upload-media");
+export const UPDATE_MEDIA_DATE_URL = withBase("/api/update-media-date");
 export const DELETE_URL = withBase("/api/delete-media");
 export const PARTITIONS_URL = withBase("/api/partitions");
 export const REINDEX_PARTITION_URL = withBase("/api/reindex-partition");

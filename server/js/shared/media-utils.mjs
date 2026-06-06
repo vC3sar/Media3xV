@@ -5,6 +5,36 @@ const IMG = /\.(jpg|jpeg|png|gif|webp|bmp|heic|heif|avif)$/i;
 const VID = /\.(mp4|webm|mov|mkv|avi|3gp)$/i;
 const AUD = /\.(mp3|m4a|wav|ogg|flac)$/i;
 
+function todayDateString(now = new Date()) {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function isValidFullDateString(dateStr) {
+  const src = String(dateStr || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(src)) return false;
+  const [yRaw, mRaw, dRaw] = src.split("-");
+  const year = Number(yRaw);
+  const month = Number(mRaw);
+  const day = Number(dRaw);
+  if (!Number.isInteger(year) || year < 1) return false;
+  if (!Number.isInteger(month) || month < 1 || month > 12) return false;
+  if (!Number.isInteger(day) || day < 1 || day > 31) return false;
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  return (
+    dt.getUTCFullYear() === year &&
+    dt.getUTCMonth() === month - 1 &&
+    dt.getUTCDate() === day
+  );
+}
+
+function isFutureFullDateString(dateStr, now = new Date()) {
+  if (!isValidFullDateString(dateStr)) return false;
+  return String(dateStr).trim() > todayDateString(now);
+}
+
 function detectType(name) {
   if (IMG.test(name)) return "image";
   if (VID.test(name)) return "video";
@@ -108,4 +138,7 @@ export {
   entryLabelFromAutoindexRoot,
   dedupeFilesByUrl,
   dedupeMixedImagesByFingerprint,
+  todayDateString,
+  isValidFullDateString,
+  isFutureFullDateString,
 };

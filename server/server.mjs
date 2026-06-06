@@ -20,13 +20,19 @@ import { createCacheService } from "./js/features/cache/service.mjs";
 import { createThumbHandler } from "./js/features/thumb/handler.mjs";
 import { createLiveService } from "./js/features/live/service.mjs";
 import { createTaskScheduler } from "./js/shared/task-scheduler.mjs";
-import { detectType, toPosix } from "./js/shared/media-utils.mjs";
+import {
+  detectType,
+  isValidFullDateString,
+  toPosix,
+  todayDateString,
+} from "./js/shared/media-utils.mjs";
 import { createClientHttpModule } from "./client-http/index.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SERVER_DIR, "..");
 const CLIENT_HTTP_DIR = path.resolve(SERVER_DIR, "client-http");
 const CONFIG_FILE = path.resolve(SERVER_DIR, "config.json");
+const DATE_OVERRIDES_FILE = path.resolve(SERVER_DIR, "date-overrides.json");
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -240,6 +246,7 @@ async function boot() {
     scansFailed: 0,
   };
   const forcedReindexPartitions = new Set();
+  const dateOverrides = new Map();
   const scheduler = createTaskScheduler({
     ffprobe: Number(process.env.MAX_FFPROBE_JOBS || 2),
     thumb: Number(process.env.MAX_FFMPEG_THUMB_JOBS || 2),
@@ -250,6 +257,48 @@ async function boot() {
     if (!DEBUG) return;
     process.stdout.write(`[DEBUG ${nowIso()}] ${args.join(" ")}\n`);
   };
+
+  function normalizeDateOverride(dateStr) {
+    const src = String(dateStr || "").trim();
+    if (!isValidFullDateString(src)) return todayDateString(new Date());
+    const today = todayDateString(new Date());
+    return src > today ? today : src;
+  }
+
+  async function loadDateOverrides() {
+    dateOverrides.clear();
+    try {
+      const raw = await fs.readFile(DATE_OVERRIDES_FILE, "utf8");
+      const parsed = JSON.parse(raw);
+      const overrides =
+        parsed && typeof parsed === "object" && parsed.overrides && typeof parsed.overrides === "object"
+          ? parsed.overrides
+          : parsed && typeof parsed === "object"
+            ? parsed
+            : {};
+      for (const [url, date] of Object.entries(overrides)) {
+        const key = String(url || "").trim();
+        if (!key) continue;
+        const normalized = normalizeDateOverride(date);
+        dateOverrides.set(key, normalized);
+      }
+      log(`Loaded date overrides count=${dateOverrides.size}`);
+    } catch {
+      log("No date overrides file available");
+    }
+  }
+
+  async function persistDateOverrides() {
+    const payload = {
+      updatedAt: nowIso(),
+      overrides: Object.fromEntries([...dateOverrides.entries()].sort()),
+    };
+    await fs.writeFile(
+      DATE_OVERRIDES_FILE,
+      `${JSON.stringify(payload, null, 2)}\n`,
+      "utf8",
+    );
+  }
 
   const cacheService = createCacheService({
     fs,
@@ -272,6 +321,7 @@ async function boot() {
       pathname === "/api/config" ||
       pathname === "/api/cache-cleanup" ||
       pathname === "/api/upload-media" ||
+      pathname === "/api/update-media-date" ||
       pathname === "/api/delete-media" ||
       pathname === "/api/reindex-partition"
     );
@@ -360,6 +410,7 @@ async function boot() {
     await fs.mkdir(THUMB_CACHE_DIR, { recursive: true });
     await fs.mkdir(LIVE_SNAPSHOT_DIR, { recursive: true });
     await fs.mkdir(LIVE_WEB_DIR, { recursive: true });
+    await loadDateOverrides();
   } catch (err) {
     throw new Error(
       `No se puede crear/acceder directorio de índice: ${path.dirname(INDEX_FILE)} (${err.message})`,
@@ -598,6 +649,7 @@ async function boot() {
     detectLivePhotoFilesystem: liveService.detectLivePhotoFilesystem,
     fastIndexMode: FAST_INDEX_MODE,
     detectLivePhotos: DETECT_LIVE_PHOTOS,
+    getDateOverrideForUrl: (url) => dateOverrides.get(String(url || "").trim()) || "",
     getPreviousIndex: () => ({
       files: Array.isArray(state.files) ? state.files : [],
       partitions:
@@ -607,6 +659,31 @@ async function boot() {
     }),
     getForcedPartitions: () => Array.from(forcedReindexPartitions),
   });
+
+  function forceReindexForUrls(urls) {
+    const normalizedUrls = Array.from(
+      new Set(
+        (Array.isArray(urls) ? urls : [])
+          .map((url) => String(url || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    const forcedKeys = new Set();
+    for (const url of normalizedUrls) {
+      const file = Array.isArray(state.files)
+        ? state.files.find((f) => String(f?.url || "") === url)
+        : null;
+      const partitionKey = String(file?.partitionKey || "").trim();
+      if (partitionKey) forcedKeys.add(partitionKey);
+    }
+    if (forcedKeys.size === 0) {
+      for (const key of Object.keys(state.partitions || {})) {
+        forcedKeys.add(key);
+      }
+    }
+    for (const key of forcedKeys) forcedReindexPartitions.add(key);
+    return Array.from(forcedKeys);
+  }
 
   async function buildFilesystemQuickFingerprint() {
     if (!(SOURCE_MODE === "filesystem" || SOURCE_MODE === "mixed")) return null;
@@ -655,6 +732,7 @@ async function boot() {
       state.status === "ready" &&
       Array.isArray(state.files) &&
       state.files.length >= 0;
+    const forcedPartitionsAtStart = new Set(forcedReindexPartitions);
     state.status = hadReadySnapshot ? "ready" : "indexing";
     state.refreshing = hadReadySnapshot;
     state.lastError = null;
@@ -703,7 +781,9 @@ async function boot() {
         metrics.scansFailed += 1;
         throw err;
       } finally {
-        forcedReindexPartitions.clear();
+        for (const key of forcedPartitionsAtStart) {
+          forcedReindexPartitions.delete(key);
+        }
         state.scanPromise = null;
       }
     })();
@@ -1054,6 +1134,63 @@ async function boot() {
           ok: true,
           forced: finalKeys.length,
           partitionKeys: finalKeys,
+          indexing: true,
+        });
+      } catch (err) {
+        return json(res, 400, {
+          error: err.message || "payload inválido",
+        });
+      }
+    }
+
+    if (pathname === "/api/update-media-date") {
+      if (req.method !== "POST") {
+        res.writeHead(405);
+        return res.end("Method not allowed");
+      }
+      try {
+        const chunks = [];
+        let total = 0;
+        for await (const chunk of req) {
+          total += chunk.length;
+          if (total > 1024 * 1024) {
+            return json(res, 413, { error: "Payload demasiado grande" });
+          }
+          chunks.push(chunk);
+        }
+        const payload = JSON.parse(
+          Buffer.concat(chunks).toString("utf8") || "{}",
+        );
+        const urls = Array.isArray(payload.urls)
+          ? payload.urls.map((u) => String(u || "").trim()).filter(Boolean)
+          : [];
+        const uniqueUrls = Array.from(new Set(urls));
+        const date = String(payload.date || "").trim();
+        if (!uniqueUrls.length) {
+          return json(res, 400, { error: "Sin urls para actualizar" });
+        }
+        if (!isValidFullDateString(date)) {
+          return json(res, 400, { error: "Fecha inválida. Usa YYYY-MM-DD." });
+        }
+        const today = todayDateString(new Date());
+        if (date > today) {
+          return json(res, 400, { error: "La fecha no puede ser futura" });
+        }
+        for (const urlValue of uniqueUrls) {
+          dateOverrides.set(urlValue, date);
+        }
+        await persistDateOverrides();
+        if (state.scanPromise) {
+          await state.scanPromise.catch(() => {});
+        }
+        const forcedPartitions = forceReindexForUrls(uniqueUrls);
+        triggerScanDebounced();
+        ensureScan().catch(() => {});
+        return json(res, 200, {
+          ok: true,
+          updated: uniqueUrls.length,
+          date,
+          forcedPartitions: forcedPartitions.length,
           indexing: true,
         });
       } catch (err) {
