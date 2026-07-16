@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { withSafePath } from "../../shared/media-utils.mjs";
 
 async function runCommand(command, args) {
   await new Promise((resolve, reject) => {
@@ -89,24 +90,25 @@ function createThumbHandler(ctx) {
         return true;
       }
 
-      await runFfmpeg([
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-ss",
-        "0.15",
-        "-i",
-        resolved.input,
-        "-frames:v",
-        "1",
-        "-vf",
-        "scale=240:-2:flags=fast_bilinear",
-        "-q:v",
-        "12",
-        "-f",
-        "mjpeg",
-        outFile,
-      ], `thumb:video:${hash}`);
+      await withSafePath(resolved.input, async (safeInput) => {
+        await runFfmpeg([
+          "-loglevel",
+          "error",
+          "-ss",
+          "0.15",
+          "-i",
+          safeInput,
+          "-frames:v",
+          "1",
+          "-vf",
+          "scale=240:-2:flags=fast_bilinear",
+          "-q:v",
+          "12",
+          "-f",
+          "mjpeg",
+          outFile,
+        ], `thumb:video:${hash}`);
+      });
 
       await serveCachedThumb(res, outFile, "image/jpeg");
     } catch (err) {
@@ -129,11 +131,11 @@ function createThumbHandler(ctx) {
     }
     try {
       const hash = createHash("sha1").update(`img|${src}|${v}|${size}`).digest("hex");
-      const outFile = path.resolve(thumbCacheDir, `${hash}.webp`);
+      const outFile = path.resolve(thumbCacheDir, `${hash}.jpg`);
       try {
         const st = await fs.stat(outFile);
         if (st.isFile() && st.size > 0) {
-          await serveCachedThumb(res, outFile, "image/webp");
+          await serveCachedThumb(res, outFile, "image/jpeg");
           return true;
         }
       } catch {}
@@ -145,29 +147,30 @@ function createThumbHandler(ctx) {
         return true;
       }
 
-      await runFfmpeg([
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-i",
-        resolved.input,
-        "-frames:v",
-        "1",
-        "-filter_complex",
-        `[0:v]scale=${size}:${size}:force_original_aspect_ratio=decrease:flags=lanczos[v]`,
-        "-map",
-        "[v]",
-        "-q:v",
-        "42",
-        "-compression_level",
-        "6",
-        "-preset",
-        "picture",
-        "-f",
-        "webp",
-        outFile,
-      ], `thumb:image:${hash}`);
-      await serveCachedThumb(res, outFile, "image/webp");
+      await withSafePath(resolved.input, async (safeInput) => {
+        await runFfmpeg([
+          "-loglevel",
+          "error",
+          "-i",
+          safeInput,
+          "-frames:v",
+          "1",
+          "-filter_complex",
+          `[0:v]scale=${size}:${size}:force_original_aspect_ratio=decrease:flags=lanczos[v]`,
+          "-map",
+          "[v]",
+          "-q:v",
+          "42",
+          "-compression_level",
+          "6",
+          "-preset",
+          "picture",
+          "-f",
+          "mjpeg",
+          outFile,
+        ], `thumb:image:${hash}`);
+      });
+      await serveCachedThumb(res, outFile, "image/jpeg");
     } catch (err) {
       log(`image thumb generation failed src=${src} err=${err.message}`);
       res.writeHead(404);
@@ -202,20 +205,21 @@ function createThumbHandler(ctx) {
         return true;
       }
 
-      await runFfmpeg([
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-i",
-        resolved.input,
-        "-frames:v",
-        "1",
-        "-q:v",
-        "2",
-        "-f",
-        "mjpeg",
-        outFile,
-      ], `thumb:web:${hash}`);
+      await withSafePath(resolved.input, async (safeInput) => {
+        await runFfmpeg([
+          "-loglevel",
+          "error",
+          "-i",
+          safeInput,
+          "-frames:v",
+          "1",
+          "-q:v",
+          "2",
+          "-f",
+          "mjpeg",
+          outFile,
+        ], `thumb:web:${hash}`);
+      });
       await serveCachedThumb(res, outFile, "image/jpeg");
     } catch (err) {
       log(`web image generation failed src=${src} err=${err.message}`);

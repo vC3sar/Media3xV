@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { withSafePath } from "../../shared/media-utils.mjs";
 
 function createLiveService(ctx) {
   const {
@@ -68,18 +69,20 @@ function createLiveService(ctx) {
   }
 
   async function probeMediaStreams(absPath) {
-    const out = await runCommand(
-      "ffprobe",
-      [
-        "-v",
-        "error",
-        "-print_format",
-        "json",
-        "-show_streams",
-        absPath,
-      ],
-      true,
-    ).catch(() => "{}");
+    const out = await withSafePath(absPath, async (safePath) => {
+      return await runCommand(
+        "ffprobe",
+        [
+          "-v",
+          "error",
+          "-print_format",
+          "json",
+          "-show_streams",
+          safePath,
+        ],
+        true,
+      ).catch(() => "{}");
+    });
     try {
       const parsed = JSON.parse(out || "{}");
       const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
@@ -116,19 +119,21 @@ function createLiveService(ctx) {
 
   async function probeLivePhotoMetadata(absVideoPath) {
     if (liveProbeCache.has(absVideoPath)) return liveProbeCache.get(absVideoPath);
-    const out = await runCommand(
-      "ffprobe",
-      [
-        "-v",
-        "error",
-        "-print_format",
-        "json",
-        "-show_entries",
-        "format_tags=com.apple.quicktime.content.identifier:stream_tags=com.apple.quicktime.content.identifier",
-        absVideoPath,
-      ],
-      true,
-    ).catch(() => "{}");
+    const out = await withSafePath(absVideoPath, async (safePath) => {
+      return await runCommand(
+        "ffprobe",
+        [
+          "-v",
+          "error",
+          "-print_format",
+          "json",
+          "-show_entries",
+          "format_tags=com.apple.quicktime.content.identifier:stream_tags=com.apple.quicktime.content.identifier",
+          safePath,
+        ],
+        true,
+      ).catch(() => "{}");
+    });
 
     let result = false;
     try {
@@ -263,34 +268,35 @@ function createLiveService(ctx) {
             throw new Error("Source has no video stream");
           }
           const mapArgs = streams.hasAudio ? ["-map", "0:v:0", "-map", "0:a:0"] : ["-map", "0:v:0"];
-          await runCommand("ffmpeg", [
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            absVideoPath,
-            ...mapArgs,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv420p",
-            ...(streams.hasAudio
-              ? ["-c:a", "aac", "-b:a", "160k", "-ac", "2"]
-              : ["-an"]),
-            "-sn",
-            "-map_metadata",
-            "-1",
-            "-movflags",
-            "+faststart",
-            "-max_muxing_queue_size",
-            "1024",
-            "-y",
-            outFile,
-          ]);
+          await withSafePath(absVideoPath, async (safePath) => {
+            await runCommand("ffmpeg", [
+              "-loglevel",
+              "error",
+              "-i",
+              safePath,
+              ...mapArgs,
+              "-c:v",
+              "libx264",
+              "-preset",
+              "medium",
+              "-crf",
+              "18",
+              "-pix_fmt",
+              "yuv420p",
+              ...(streams.hasAudio
+                ? ["-c:a", "aac", "-b:a", "160k", "-ac", "2"]
+                : ["-an"]),
+              "-sn",
+              "-map_metadata",
+              "-1",
+              "-movflags",
+              "+faststart",
+              "-max_muxing_queue_size",
+              "1024",
+              "-y",
+              outFile,
+            ]);
+          });
           const outSt = await fs.stat(outFile);
           if (!outSt.isFile() || outSt.size <= 0) {
             throw new Error("Empty transcoded file");
@@ -361,22 +367,23 @@ function createLiveService(ctx) {
         return;
       }
 
-      await runCommand("ffmpeg", [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-i",
-        stillInput,
-        "-map",
-        "0:v:0",
-        "-frames:v",
-        "1",
-        "-q:v",
-        "1",
-        "-f",
-        "mjpeg",
-        outFile,
-      ]);
+      await withSafePath(stillInput, async (safeInput) => {
+        await runCommand("ffmpeg", [
+          "-loglevel",
+          "error",
+          "-i",
+          safeInput,
+          "-map",
+          "0:v:0",
+          "-frames:v",
+          "1",
+          "-q:v",
+          "1",
+          "-f",
+          "mjpeg",
+          outFile,
+        ]);
+      });
 
       const st = await fs.stat(outFile);
       res.writeHead(200, {

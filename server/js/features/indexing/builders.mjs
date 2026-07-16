@@ -2,6 +2,7 @@ import { URL } from "node:url";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import {
   detectType,
   dedupeFilesByUrl,
@@ -15,6 +16,7 @@ import {
   toPosix,
   todayDateString,
   isValidFullDateString,
+  withSafePath,
 } from "../../shared/media-utils.mjs";
 
 async function walk(fs, dir, out = []) {
@@ -69,17 +71,19 @@ async function runCommandCapture(command, args) {
 
 async function probeDimensions(absInput) {
   try {
-    const raw = await runCommandCapture("ffprobe", [
-      "-v",
-      "error",
-      "-select_streams",
-      "v:0",
-      "-show_entries",
-      "stream=width,height",
-      "-of",
-      "json",
-      absInput,
-    ]);
+    const raw = await withSafePath(absInput, async (safeInput) => {
+      return await runCommandCapture("ffprobe", [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height",
+        "-of",
+        "json",
+        safeInput,
+      ]);
+    });
     const parsed = JSON.parse(raw || "{}");
     const stream = Array.isArray(parsed.streams) ? parsed.streams[0] : null;
     const width = Number(stream?.width) || 0;
@@ -115,15 +119,17 @@ function normalizeDateFromText(raw) {
 
 async function probeImageExifDateFallback(absInput) {
   try {
-    const raw = await runCommandCapture("ffprobe", [
-      "-v",
-      "error",
-      "-print_format",
-      "json",
-      "-show_entries",
-      "format_tags=creation_time,com.apple.quicktime.creationdate,DateTimeOriginal,DateTimeDigitized,DateTime",
-      absInput,
-    ]);
+    const raw = await withSafePath(absInput, async (safeInput) => {
+      return await runCommandCapture("ffprobe", [
+        "-v",
+        "error",
+        "-print_format",
+        "json",
+        "-show_entries",
+        "format_tags=creation_time,com.apple.quicktime.creationdate,DateTimeOriginal,DateTimeDigitized,DateTime",
+        safeInput,
+      ]);
+    });
     const parsed = JSON.parse(raw || "{}");
     const tags = parsed?.format?.tags || {};
     const candidates = [
@@ -137,7 +143,40 @@ async function probeImageExifDateFallback(absInput) {
       const normalized = normalizeDateFromText(c);
       if (normalized) return normalized;
     }
-    return null;
+  } catch {}
+  return await probeImageEmbeddedDateFallback(absInput);
+}
+
+function normalizeEmbeddedDateText(text) {
+  const src = String(text || "");
+  const labelPatterns = [
+    /Actions\s+When[^0-9]{0,120}(20\d{2}[:\-\/]\d{2}[:\-\/]\d{2})/i,
+    /(?:DateTimeOriginal|CreateDate|CreationDate|MediaCreateDate|ModifyDate|FileModifyDate|FileCreateDate)[^0-9]{0,120}(20\d{2}[:\-\/]\d{2}[:\-\/]\d{2})/i,
+  ];
+  for (const rx of labelPatterns) {
+    const m = src.match(rx);
+    if (m?.[1]) {
+      const normalized = normalizeDateFromText(m[1]);
+      if (normalized) return normalized;
+    }
+  }
+  const directPatterns = [
+    /(20\d{2}[:\-\/]\d{2}[:\-\/]\d{2})(?:[ T]\d{2}:\d{2}:\d{2}(?:Z|[+\-]\d{2}:?\d{2})?)?/,
+    /(20\d{2})(\d{2})(\d{2})/,
+  ];
+  for (const rx of directPatterns) {
+    const m = src.match(rx);
+    if (!m) continue;
+    const normalized = normalizeDateFromText(m[1] || m[0] || "");
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+async function probeImageEmbeddedDateFallback(absInput) {
+  try {
+    const raw = await readFile(absInput);
+    return normalizeEmbeddedDateText(raw.toString("latin1"));
   } catch {
     return null;
   }
@@ -147,34 +186,35 @@ async function ensureImageThumbFilesystem(ctx, mediaSrc, mtimeMs, absInput, size
   const { fs, path, thumbCacheDir, log } = ctx;
   if (!thumbCacheDir) return;
   const hash = createHash("sha1").update(`img|${mediaSrc}|${Math.floor(mtimeMs)}|${size}`).digest("hex");
-  const outFile = path.resolve(thumbCacheDir, `${hash}.webp`);
+  const outFile = path.resolve(thumbCacheDir, `${hash}.jpg`);
   try {
     const st = await fs.stat(outFile);
     if (st.isFile() && st.size > 0) return;
   } catch {}
   try {
-    await runCommand("ffmpeg", [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-i",
-      absInput,
-      "-frames:v",
-      "1",
-      "-filter_complex",
-      `[0:v]scale=${size}:${size}:force_original_aspect_ratio=decrease:flags=lanczos[v]`,
-      "-map",
-      "[v]",
-      "-q:v",
-      "42",
-      "-compression_level",
-      "6",
-      "-preset",
-      "picture",
-      "-f",
-      "webp",
-      outFile,
-    ]);
+    await withSafePath(absInput, async (safeInput) => {
+      await runCommand("ffmpeg", [
+        "-loglevel",
+        "error",
+        "-i",
+        safeInput,
+        "-frames:v",
+        "1",
+        "-filter_complex",
+        `[0:v]scale=${size}:${size}:force_original_aspect_ratio=decrease:flags=lanczos[v]`,
+        "-map",
+        "[v]",
+        "-q:v",
+        "42",
+        "-compression_level",
+        "6",
+        "-preset",
+        "picture",
+        "-f",
+        "mjpeg",
+        outFile,
+      ]);
+    });
   } catch (err) {
     log(`image thumb pregeneration failed src=${mediaSrc} size=${size} err=${err.message}`);
   }
@@ -338,7 +378,17 @@ async function buildFilesystemIndex(ctx) {
           now,
         );
         let datePatched = Boolean(dateInfo.patched) && !overrideDate;
-        if (!overrideDate && dateInfo.date === "0000-sin-fecha") {
+        if (
+          !overrideDate &&
+          !isValidFullDateString(dateInfo.date) &&
+          dateInfo.date !== "0000-sin-fecha"
+        ) {
+          const exifDate = await probeImageExifDateFallback(abs);
+          if (exifDate) {
+            resolvedDate = resolveIndexedDate({ date: exifDate }, now);
+            datePatched = false;
+          }
+        } else if (!overrideDate && dateInfo.date === "0000-sin-fecha") {
           const exifDate = await probeImageExifDateFallback(abs);
           if (exifDate) {
             resolvedDate = resolveIndexedDate({ date: exifDate }, now);
@@ -486,7 +536,8 @@ async function buildAutoindexIndex(ctx) {
           dateGroup: deriveDateGroup(resolvedDate, 0),
           dateSortKey: normalizeDateSortKey(resolvedDate, 0),
           folderGroup,
-          datePatched: Boolean(dateInfo.patched) && !overrideDate,
+          datePatched:
+            Boolean(dateInfo.patched) && !overrideDate && !isValidFullDateString(dateInfo.date),
           dateOverridden: Boolean(overrideDate),
           width: null,
           height: null,

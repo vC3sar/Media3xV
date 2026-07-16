@@ -1,5 +1,8 @@
 import path from "node:path";
 import { URL } from "node:url";
+import { createHash } from "node:crypto";
+import os from "node:os";
+import fs from "node:fs/promises";
 
 const IMG = /\.(jpg|jpeg|png|gif|webp|bmp|heic|heif|avif)$/i;
 const VID = /\.(mp4|webm|mov|mkv|avi|3gp)$/i;
@@ -10,6 +13,34 @@ function todayDateString(now = new Date()) {
   const m = String(now.getMonth() + 1).padStart(2, "0");
   const d = String(now.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+async function withSafePath(absPath, callback) {
+  if (/[^\x00-\x7F]/.test(absPath)) {
+    try {
+      const ext = path.extname(absPath);
+      const safeName = createHash("sha1").update(absPath).digest("hex") + ext;
+      const safePath = path.join(os.tmpdir(), safeName);
+      
+      try {
+        await fs.stat(safePath);
+      } catch {
+        await fs.link(absPath, safePath);
+      }
+      
+      try {
+        const res = await callback(safePath);
+        await fs.unlink(safePath).catch(() => {});
+        return res;
+      } catch (err) {
+        await fs.unlink(safePath).catch(() => {});
+        throw err;
+      }
+    } catch (e) {
+      return await callback(absPath);
+    }
+  }
+  return await callback(absPath);
 }
 
 function isValidFullDateString(dateStr) {
@@ -141,4 +172,5 @@ export {
   todayDateString,
   isValidFullDateString,
   isFutureFullDateString,
+  withSafePath,
 };

@@ -2,9 +2,9 @@
   "host": "0.0.0.0",
   "port": 3000,
   "sourceMode": "filesystem",
-  "mediaRoot": "/data/data/com.termux/files/home/.termux/Backups/",
+  "mediaRoot": "C:\\Users\\vCesar\\OneDrive\\Escritorio\\takeout-20260520T011015Z-3-001\\Takeout",
   "mediaRoots": [
-    "/data/data/com.termux/files/home/.termux/Backups/"
+    "C:\\Users\\vCesar\\OneDrive\\Escritorio\\takeout-20260520T011015Z-3-001\\Takeout"
   ],
   "autoindexRootUrl": "http://192.168.1.125:8080/takeout-20260520T011015Z-3-001/",
   "autoindexRootUrls": [
@@ -14,8 +14,9 @@
   "watchDebounceMs": 1200,
   "filesystemRefreshMs": 15000,
   "autoindexRefreshMs": 20000,
-  "clientHttpEnabled": true,
   "fastIndexMode": true,
   "detectLivePhotos": true,
-  "debug": true
+  "debug": true,
+  "apiToken": "",
+  "clientHttpEnabled": true
 }
