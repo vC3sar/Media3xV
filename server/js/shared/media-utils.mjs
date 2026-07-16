@@ -17,27 +17,29 @@ function todayDateString(now = new Date()) {
 
 async function withSafePath(absPath, callback) {
   if (/[^\x00-\x7F]/.test(absPath)) {
+    let safePath = null;
     try {
       const ext = path.extname(absPath);
       const safeName = createHash("sha1").update(absPath).digest("hex") + ext;
-      const safePath = path.join(os.tmpdir(), safeName);
+      safePath = path.join(os.tmpdir(), safeName);
       
       try {
         await fs.stat(safePath);
       } catch {
         await fs.link(absPath, safePath);
       }
-      
-      try {
-        const res = await callback(safePath);
-        await fs.unlink(safePath).catch(() => {});
-        return res;
-      } catch (err) {
-        await fs.unlink(safePath).catch(() => {});
-        throw err;
-      }
     } catch (e) {
+      // Fallback only if linking fails
       return await callback(absPath);
+    }
+    
+    try {
+      const res = await callback(safePath);
+      await fs.unlink(safePath).catch(() => {});
+      return res;
+    } catch (err) {
+      await fs.unlink(safePath).catch(() => {});
+      throw err;
     }
   }
   return await callback(absPath);

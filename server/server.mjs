@@ -29,6 +29,8 @@ import {
 import { createClientHttpModule } from "./client-http/index.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
+const LOCAL_BIN_DIR = path.resolve(SERVER_DIR, "bin");
+process.env.PATH = `${LOCAL_BIN_DIR}${path.delimiter}${process.env.PATH}`;
 const PROJECT_ROOT = path.resolve(SERVER_DIR, "..");
 const CLIENT_HTTP_DIR = path.resolve(SERVER_DIR, "client-http");
 const CONFIG_FILE = path.resolve(SERVER_DIR, "config.json");

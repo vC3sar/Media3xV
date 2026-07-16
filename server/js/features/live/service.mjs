@@ -291,8 +291,6 @@ function createLiveService(ctx) {
               "-1",
               "-movflags",
               "+faststart",
-              "-max_muxing_queue_size",
-              "1024",
               "-y",
               outFile,
             ]);
