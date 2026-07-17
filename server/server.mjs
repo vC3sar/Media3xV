@@ -1345,6 +1345,11 @@ async function boot() {
           .filter((r) => r && !r.ok)
           .map((r) => ({ url: r.url, reason: r.reason }));
         if (deleted.length > 0) {
+          const deletedSet = new Set(deleted);
+          if (Array.isArray(state.files)) {
+            state.files = state.files.filter((f) => !deletedSet.has(f.url));
+            state.count = state.files.length;
+          }
           triggerScanDebounced();
           ensureScan().catch(() => {});
         }

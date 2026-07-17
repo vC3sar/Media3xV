@@ -110,6 +110,109 @@ function toRemoteUrl(value) {
     } catch {
       return rawInput;
     }
+  REINDEX_PARTITION_URL,
+  LIVE_PREPARE_URL,
+  LIVE_STATUS_URL,
+  FAVORITES_KEY,
+  INDEX_POLL_MS,
+  DEBUG_CLIENT,
+  IMG,
+  VID,
+  AUD,
+  SIZES,
+  SIZE_PX,
+} from "./config.js";
+import { createStore } from "./state/store.js";
+import { createFavoritesRepository } from "./infrastructure/favorites.repository.js";
+import {
+  prettyDate,
+  dateRank,
+  monthGroupKey,
+  monthGroupRank,
+  monthGroupLabel,
+} from "./core/date-utils.js";
+import { applyFiltersUseCase } from "./application/apply-filters.usecase.js";
+
+const RUNTIME_BASE_URL = String(window.media3xvRuntime?.baseUrl || "")
+  .trim()
+  .replace(/\/+$/, "");
+const DEBUG_VIEWER_NAV =
+  new URLSearchParams(location.search).get("debugViewerNav") === "true";
+function viewerNavDbg(event, payload = {}) {
+  if (!DEBUG_VIEWER_NAV) return;
+  try {
+    const sourceFiles = viewerFilesSnapshot.length
+      ? viewerFilesSnapshot
+      : filteredFiles;
+    const source = viewerFilesSnapshot.length ? "snapshot" : "filtered";
+    const activeUrl = sourceFiles[currentViewerIdx]?.url || "";
+    console.log("[DEBUG-VIEWER-NAV]", event, {
+      source,
+      currentViewerIdx,
+      currentViewerUrl,
+      activeUrl,
+      sourceLen: sourceFiles.length,
+      ...payload,
+    });
+  } catch (err) {
+    console.log("[DEBUG-VIEWER-NAV]", event, payload, err?.message || err);
+  }
+}
+function viewerNavWindow(centerIdx, radius = 2) {
+  const sourceFiles = viewerFilesSnapshot.length
+    ? viewerFilesSnapshot
+    : filteredFiles;
+  const out = [];
+  const from = Math.max(0, Number(centerIdx) - radius);
+  const to = Math.min(sourceFiles.length - 1, Number(centerIdx) + radius);
+  for (let i = from; i <= to; i += 1) {
+    const f = sourceFiles[i];
+    out.push({
+      idx: i,
+      type: String(f?.type || ""),
+      url: String(f?.url || ""),
+    });
+  }
+  return out;
+}
+function viewerNavCompactWindow(centerIdx, radius = 2) {
+  return viewerNavWindow(centerIdx, radius).map(
+    (x) => `${x.idx}:${x.type}:${String(x.url || "").split("/").pop()}`,
+  );
+}
+function normalizeUrlPath(rawUrl) {
+  const raw = String(rawUrl || "").trim();
+  if (!raw) return "";
+  const match = raw.match(/^([^?#]*)(\?[^#]*)?(#.*)?$/);
+  if (!match) return raw;
+  const pathPart = String(match[1] || "");
+  const queryPart = String(match[2] || "");
+  const hashPart = String(match[3] || "");
+  const normalizedPath = pathPart
+    .split("/")
+    .map((seg) => {
+      if (!seg) return seg;
+      try {
+        return encodeURIComponent(decodeURIComponent(seg));
+      } catch {
+        return encodeURIComponent(seg);
+      }
+    })
+    .join("/");
+  const normalizedHash = hashPart ? hashPart.replace(/#/g, "%23") : "";
+  return `${normalizedPath}${queryPart}${normalizedHash}`;
+}
+function toRemoteUrl(value) {
+  const rawInput = String(value || "").trim();
+  if (!rawInput) return "";
+  if (/^https?:\/\//i.test(rawInput)) {
+    try {
+      const u = new URL(rawInput);
+      u.pathname = normalizeUrlPath(u.pathname);
+      return u.toString();
+    } catch {
+      return rawInput;
+    }
   }
   const raw = normalizeUrlPath(rawInput);
   if (raw.startsWith("/") && RUNTIME_BASE_URL) return `${RUNTIME_BASE_URL}${raw}`;
@@ -118,6 +221,7 @@ function toRemoteUrl(value) {
 
 let allFiles = [],
   filteredFiles = [];
+let pendingDeletedUrls = new Set();
 let sizeIdx = 3;
 let lastDesktopSizeIdx = 3;
 let mobileGridInitialized = false;
@@ -459,6 +563,7 @@ async function submitDeleteConfirmModal() {
       Array.isArray(payload.deleted) ? payload.deleted : [],
     );
     const deletedCount = deletedSet.size;
+    deletedSet.forEach((u) => pendingDeletedUrls.add(u));
     allFiles = allFiles.filter((f) => !deletedSet.has(f.url));
     selectedUrls.clear();
     lastSelectedUrl = "";
@@ -1584,172 +1689,6 @@ function normalizeDate(dateStr, fallbackName, fallbackUrl) {
   }
   return { value: todayDateString(), fallback: true };
 }
-
-function normalizeIndexedFile(f) {
-  dataMetrics.rawCount += 1;
-  const rawUrl = typeof f?.url === "string" ? f.url.trim() : "";
-  const name =
-    typeof f?.name === "string" && f.name.trim()
-      ? f.name.trim()
-      : decodeURIComponent((rawUrl || "").split("/").pop() || "");
-  const type =
-    (typeof f?.type === "string" ? f.type.trim() : "") ||
-    (IMG.test(rawUrl || "")
-      ? "image"
-      : VID.test(rawUrl || "")
-        ? "video"
-        : AUD.test(rawUrl || "")
-          ? "audio"
-          : null);
-  if (!type || !rawUrl || !name) {
-    dataMetrics.discardedCount += 1;
-    return null;
-  }
-  const normalizedDate = normalizeDate(
-    typeof f?.date === "string" ? f.date : "",
-    name,
-    rawUrl,
-  );
-  if (normalizedDate.fallback) dataMetrics.fallbackDateCount += 1;
-  dataMetrics.validCount += 1;
-  return {
-    id: typeof f?.id === "string" && f.id.trim() ? f.id.trim() : rawUrl,
-    url: rawUrl,
-    name,
-    type,
-    date: normalizedDate.value,
-    width: Number.isFinite(f?.width) ? Number(f.width) : null,
-    height: Number.isFinite(f?.height) ? Number(f.height) : null,
-    size: Number.isFinite(f.size) ? f.size : 0,
-    mtimeMs: Number.isFinite(f?.mtimeMs) ? Number(f.mtimeMs) : 0,
-    thumbUrl:
-      typeof f?.thumbUrl === "string" && f.thumbUrl.trim()
-        ? toRemoteUrl(f.thumbUrl.trim())
-        : "",
-    thumb128Url:
-      typeof f?.thumb128Url === "string" && f.thumb128Url.trim()
-        ? toRemoteUrl(f.thumb128Url.trim())
-        : typeof f?.thumbUrl === "string" && f.thumbUrl.trim()
-          ? toRemoteUrl(f.thumbUrl.trim())
-          : "",
-    thumb512Url:
-      typeof f?.thumb512Url === "string" && f.thumb512Url.trim()
-        ? toRemoteUrl(f.thumb512Url.trim())
-        : typeof f?.thumbUrl === "string" && f.thumbUrl.trim()
-          ? toRemoteUrl(f.thumbUrl.trim())
-          : "",
-    livePhoto:
-      f?.livePhoto && typeof f.livePhoto === "object" && f.livePhoto.enabled
-        ? {
-            enabled: true,
-            photoUrl:
-              typeof f.livePhoto.photoUrl === "string"
-                ? toRemoteUrl(f.livePhoto.photoUrl)
-                : "",
-            videoUrl:
-              typeof f.livePhoto.videoUrl === "string"
-                ? toRemoteUrl(f.livePhoto.videoUrl)
-                : "",
-            snapshotUrl:
-              typeof f.livePhoto.snapshotUrl === "string"
-                ? toRemoteUrl(f.livePhoto.snapshotUrl)
-                : "",
-            webVideoUrl:
-              typeof f.livePhoto.webVideoUrl === "string"
-                ? toRemoteUrl(f.livePhoto.webVideoUrl)
-                : "",
-          }
-        : null,
-    entryId:
-      typeof f?.entryId === "string" && f.entryId.trim()
-        ? f.entryId.trim()
-        : "entry:0",
-    entryLabel:
-      typeof f?.entryLabel === "string" && f.entryLabel.trim()
-        ? f.entryLabel.trim()
-        : "Entrada",
-  };
-}
-
-function updateEntryFilterUI() {
-  const wrap = document.getElementById("entryFilterWrap");
-  const sel = document.getElementById("entryFilter");
-  if (!wrap || !sel) return;
-
-  const entryMap = new Map();
-  for (const f of allFiles) {
-    if (!f?.entryId) continue;
-    if (!entryMap.has(f.entryId))
-      entryMap.set(f.entryId, f.entryLabel || f.entryId);
-  }
-  const entries = [...entryMap.entries()];
-
-  sel.innerHTML = "";
-  const optAll = document.createElement("option");
-  optAll.value = "all";
-  optAll.textContent = "Todas";
-  sel.appendChild(optAll);
-  entries.forEach(([id, label]) => {
-    const o = document.createElement("option");
-    o.value = id;
-    o.textContent = label;
-    sel.appendChild(o);
-  });
-
-  if (entries.length <= 1) {
-    currentEntry = "all";
-    sel.value = "all";
-    sel.disabled = true;
-    wrap.style.display = "none";
-    return;
-  }
-
-  wrap.style.display = "flex";
-  sel.disabled = false;
-  if (currentEntry !== "all" && !entryMap.has(currentEntry))
-    currentEntry = "all";
-  sel.value = currentEntry;
-}
-
-async function loadIndex() {
-  const res = await fetch(INDEX_URL, { cache: "no-store" });
-  if (res.status === 202) {
-    const payload = await res.json();
-    const err = new Error("INDEXING");
-    err.code = "INDEXING";
-    err.payload = payload;
-    throw err;
-  }
-  if (!res.ok) throw new Error(`Index HTTP ${res.status}`);
-  const payload = await res.json();
-  if (!payload || !Array.isArray(payload.files))
-    throw new Error("Índice inválido");
-  dataMetrics.rawCount = 0;
-  dataMetrics.validCount = 0;
-  dataMetrics.discardedCount = 0;
-  dataMetrics.fallbackDateCount = 0;
-  const files = payload.files.map(normalizeIndexedFile).filter(Boolean);
-  dbg("loadIndex metrics", { ...dataMetrics, apiCount: payload.files.length });
-  return {
-    version: payload.version || payload.generatedAt || `${files.length}`,
-    files,
-  };
-}
-
-function indexBackoffMs() {
-  const base = Math.min(10000, 1200 * (indexRetryCount + 1));
-  const jitter = Math.floor(Math.random() * 500);
-  return base + jitter;
-}
-
-function applyNewFileSet(nextFiles, source) {
-  const prevCount = allFiles.length;
-  allFiles = nextFiles;
-  enqueueThumbPrewarm(allFiles);
-  updateEntryFilterUI();
-  groupKeys = [];
-  groupMap = {};
-  applyFilters();
   if (source === "poll" && prevCount !== nextFiles.length) {
     toast("Lista actualizada");
   }
