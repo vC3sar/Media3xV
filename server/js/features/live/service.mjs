@@ -379,6 +379,7 @@ function createLiveService(ctx) {
           "1",
           "-f",
           "mjpeg",
+          "-y",
           outFile,
         ]);
       });

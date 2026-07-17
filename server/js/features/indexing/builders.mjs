@@ -212,6 +212,7 @@ async function ensureImageThumbFilesystem(ctx, mediaSrc, mtimeMs, absInput, size
         "picture",
         "-f",
         "mjpeg",
+        "-y",
         outFile,
       ]);
     });

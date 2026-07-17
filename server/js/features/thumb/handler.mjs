@@ -106,6 +106,7 @@ function createThumbHandler(ctx) {
           "12",
           "-f",
           "mjpeg",
+          "-y",
           outFile,
         ], `thumb:video:${hash}`);
       });
@@ -167,6 +168,7 @@ function createThumbHandler(ctx) {
           "picture",
           "-f",
           "mjpeg",
+          "-y",
           outFile,
         ], `thumb:image:${hash}`);
       });
@@ -217,6 +219,7 @@ function createThumbHandler(ctx) {
           "2",
           "-f",
           "mjpeg",
+          "-y",
           outFile,
         ], `thumb:web:${hash}`);
       });
